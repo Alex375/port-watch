@@ -105,7 +105,7 @@ Both remove the .app, UserDefaults preferences, caches, logs, and any residual p
 
 ## Build from Source
 
-Requires Xcode (free, App Store) on macOS 15+.
+Requires Xcode (free, App Store) on macOS 26+.
 
 ```bash
 # Debug build
@@ -136,7 +136,11 @@ feature/xxx ──merge──> dev ──PR──> main ──auto──> GitHub
 6. On merge to `main`: GitHub Actions automatically builds a Release .app and creates a GitHub Release
 
 ### Version Bumping
-Update `CFBundleShortVersionString` in `PortWatch/Info.plist` before merging to `main`.
+Every merge to `main` triggers a GitHub Release. The version **must** be bumped in `PortWatch/Info.plist` (`CFBundleShortVersionString`) before each PR to `main`, otherwise the release will be skipped (duplicate version).
+
+- **Patch** (1.0.x): bug fixes, small tweaks
+- **Minor** (1.x.0): new features
+- **Major** (x.0.0): breaking changes
 
 ## Stack
 
@@ -149,8 +153,8 @@ Update `CFBundleShortVersionString` in `PortWatch/Info.plist` before merging to 
 | Docker detection | docker ps --format json |
 | Persistence | UserDefaults |
 | Notifications | UNUserNotificationCenter |
-| CI/CD | GitHub Actions (macos-15 runner) |
-| Min. macOS | 15.0 (Sequoia) |
+| CI/CD | GitHub Actions (macos-26 runner) |
+| Min. macOS | 26.0 (Tahoe) |
 
 ## License
 
