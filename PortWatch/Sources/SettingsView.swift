@@ -140,28 +140,58 @@ struct SettingsView: View {
                 HStack {
                     Text("PortWatch v\(updater.currentVersion)")
                         .font(.caption)
-                    if updater.updateAvailable, let v = updater.latestVersion {
-                        Text("v\(v) available")
-                            .font(.caption2)
-                            .foregroundStyle(.blue)
-                    }
                     Spacer()
                     if updater.isChecking {
-                        ProgressView()
-                            .controlSize(.mini)
-                    } else {
-                        Button("Check for update") {
-                            Task { await updater.checkForUpdate() }
+                        HStack(spacing: 4) {
+                            ProgressView()
+                                .controlSize(.mini)
+                            Text("Checking...")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
-                        .font(.caption2)
+                    } else {
+                        Button {
+                            Task { await updater.checkForUpdate() }
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 8))
+                                Text("Check for update")
+                                    .font(.caption2)
+                            }
+                        }
                         .buttonStyle(.borderless)
                     }
                 }
 
+                // Status line
                 if let err = updater.error {
-                    Text(err)
-                        .font(.caption2)
-                        .foregroundStyle(.red)
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.circle")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.red)
+                        Text(err)
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                    }
+                } else if updater.updateAvailable, let v = updater.latestVersion {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.blue)
+                        Text("v\(v) available")
+                            .font(.caption2)
+                            .foregroundStyle(.blue)
+                    }
+                } else if !updater.isChecking && updater.latestVersion != nil {
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark.circle")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.green)
+                        Text("Up to date")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 

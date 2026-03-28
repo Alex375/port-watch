@@ -378,7 +378,7 @@ struct MenuContentView: View {
         if hasWarning {
             HStack(spacing: 4) {
                 if isConflict {
-                    iconBadge("exclamationmark.triangle.fill", "PORT CONFLICT", color: .yellow)
+                    iconBadge("arrow.triangle.branch", "conflict", color: .secondary)
                 }
                 if display.entry.tcpState.isZombie {
                     iconBadge("xmark.seal.fill", "ZOMBIE", color: .red)

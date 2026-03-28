@@ -1,97 +1,157 @@
 # PortWatch
 
-Application macOS menubar qui surveille en temps reel les ports TCP ouverts sur votre machine, identifie les processus et projets associes, et permet de les gerer directement depuis la barre de menus.
+A lightweight macOS menubar app that monitors open TCP ports in real-time, identifies the associated projects and processes, and lets you manage them without leaving your workflow.
 
-## Fonctionnalites
+![Menubar icon](screenshots/menubar.png)
 
-- **Monitoring temps reel** -- affiche tous les ports ouverts (LISTEN, CLOSE_WAIT, TIME_WAIT) avec le processus, PID, ligne de commande, projet associe et duree d'execution
-- **Detection de projet** -- identifie automatiquement le projet via Docker (`docker ps`), racine git (`.git`), ou ports standards connus (PostgreSQL, MySQL, Redis, MongoDB, Elasticsearch)
-- **Groupement par projet** -- les processus sont regroupes par projet dans un popover riche SwiftUI, pas en liste plate. "Other" toujours en dernier
-- **Detection de role** -- chaque processus est tague Front/Back/DB/Cache selon des mots-cles configurables (dossier cwd, nom du process, ligne de commande)
-- **Kill de processus** -- kill individuel ou par projet, avec sequence SIGTERM (4s polling) puis SIGKILL (2s polling) et verification. Confirmation requise pour les processus non identifies ("Other")
-- **Detection zombies** -- signale les processus en `CLOSE_WAIT` / `TIME_WAIT` avec un badge rouge
-- **Detection de conflits** -- signale quand plusieurs PIDs ecoutent sur le meme port (badge jaune)
-- **Alertes CPU/RAM** -- badges conditionnels quand les seuils sont depasses (defaut : 50% CPU, 500 MB RAM)
-- **Notifications macOS** -- optionnelles (desactivees par defaut) : nouveau port detecte, conflit de port
-- **Ouvrir dans le navigateur** -- bouton pour ouvrir `http://localhost:PORT` directement
-- **Reglages en ligne** -- seuils CPU/RAM, intervalle de refresh (3-30s), notifications, mots-cles de detection editables
-- **Desinstallation complete** -- depuis le menu Reglages ou via `./uninstall.sh`
+![Main view](screenshots/main_screen.png)
 
-## Stack
+![Settings](screenshots/settings.png)
 
-| Composant | Technologie |
+## Features
+
+### Port Detection
+- Real-time scanning of all open TCP ports via native macOS APIs (libproc)
+- Displays for each port: port number, process name, PID, full command line, uptime
+- Automatic refresh every 10 seconds (configurable from 3s to 30s)
+- Manual refresh button
+
+### Project Identification
+- Automatically groups ports by project using this priority:
+  1. **Docker** — matches exposed ports with running containers via `docker ps`
+  2. **Git repository** — walks up from the process working directory to find `.git`, uses the repo folder name
+  3. **Known ports** — PostgreSQL (5432), MySQL (3306), Redis (6379), MongoDB (27017), Elasticsearch (9200)
+  4. **Other** — unidentified processes, shown last
+
+### Role Tagging
+Each process is tagged based on configurable keyword matching against the folder name, process name, and command line:
+
+| Tag | Default keywords | Icon |
+|---|---|---|
+| **Front** | front, web, client, ui, vite, webpack, next, nuxt | Globe |
+| **Back** | back, api, server, uvicorn, gunicorn, flask, django, express, fastify | Server rack |
+| **DB** | postgres, mysqld, mysql, mongod, redis-server + db, database (folders) | Drive |
+| **Cache** | memcached, rabbitmq-server | Bolt |
+
+Keywords are fully editable in Settings.
+
+### Process Management
+- **Kill individual process** — SIGTERM with 4s polling, then SIGKILL with 2s polling, with verification at every step
+- **Kill entire project** — kills all processes in a group in parallel, with individual verification and detailed report
+- **Confirmation required** for "Other" (unidentified) processes to prevent killing system services
+- **Open in browser** — opens `http://localhost:PORT` for any port
+
+### Monitoring & Alerts
+- **Zombie detection** — processes in CLOSE_WAIT or TIME_WAIT state, flagged with a red badge
+- **Port conflict detection** — multiple PIDs listening on the same port, flagged with a yellow badge
+- **CPU alert** — orange badge when exceeding threshold (default: 50%, configurable)
+- **RAM alert** — orange badge when exceeding threshold (default: 500 MB, configurable)
+
+### Dynamic Menubar Icon
+The icon changes based on the number of project ports (excluding "Other"):
+
+| State | Icon |
 |---|---|
-| Langage | Swift 6.0 |
-| UI | SwiftUI `MenuBarExtra` (`.window` style) |
-| Concurrence | Swift Concurrency (`@Observable`, `@MainActor`, `Task.detached`) |
-| Scan ports/process | APIs systeme macOS natives (libproc via `import Darwin`) |
-| Detection Docker | `docker ps --format json` via subprocess |
-| Persistance | `UserDefaults` |
-| Notifications | `UNUserNotificationCenter` |
-| Target | macOS 26 (Tahoe) minimum |
-| Distribution | `.app` standalone (pas de signature, pas d'App Store) |
+| No project ports | Eye closed |
+| 1-3 ports | Eye open |
+| 4-8 ports | Eye filled |
+| 9+ ports or zombie detected | Eye with warning |
 
-## Prerequis
+### Notifications
+Optional macOS notifications (via UNUserNotificationCenter), configurable separately:
+- **New ports**: Off / Projects only / All
+- **Port conflicts**: Off / Projects only / All
 
-- macOS 26 (Tahoe) ou plus recent
-- Xcode (gratuit, App Store)
+### Settings
+Inline settings panel with:
+- CPU and RAM alert thresholds (sliders)
+- Refresh interval (3-30 seconds)
+- Notification preferences (segmented controls)
+- Detection keywords (editable tags, add/remove)
+- Version info with update checker
+- Reset to defaults
+- Uninstall
 
-## Build
-
-```bash
-# Build debug
-xcodebuild -scheme PortWatch -configuration Debug build
-
-# Build release
-xcodebuild -scheme PortWatch -configuration Release build
-
-# Tests
-xcodebuild -scheme PortWatch test
-```
+### Auto-Update
+- Checks GitHub Releases at launch for new versions
+- Manual check available in Settings
+- One-click update: downloads, replaces, and relaunches automatically
 
 ## Installation
 
-L'app n'est pas signee avec un certificat Apple Developer. Au premier lancement :
-**Clic droit -> Ouvrir -> Ouvrir quand meme** pour bypasser Gatekeeper (une seule fois).
+### Download
+1. Go to the [Releases](https://github.com/Alex375/port-watch/releases) page
+2. Download `PortWatch.zip` from the latest release
+3. Unzip and move `PortWatch.app` to `/Applications`
 
-## Utilisation
+### First Launch (unsigned app)
+Since the app is not signed with an Apple Developer certificate, macOS will block it the first time:
 
-L'app vit dans la menubar. L'icone affiche le nombre de ports ouverts. Un clic ouvre un popover avec :
+1. Double-click `PortWatch.app` — macOS shows "cannot be opened"
+2. Open **System Settings** > **Privacy & Security**
+3. Scroll down — you'll see "PortWatch was blocked"
+4. Click **Open Anyway**
+5. Reopen `PortWatch.app` — it will launch normally
 
-- Les ports groupes par projet, avec pour chacun : numero de port, nom du processus, PID, ligne de commande, role (Front/Back/DB/Cache), duree, dossier cwd
-- Des badges d'alerte : zombie (rouge), conflit de port (jaune), CPU/RAM excessifs (orange)
-- Un bouton kill par processus (avec confirmation pour les processus "Other") et par projet
-- Un bouton pour ouvrir le port dans le navigateur
-- Un panneau de reglages inline (seuils, interval, notifications, mots-cles de detection)
-- Un bouton de refresh manuel et un bouton Quit
+This is only needed once.
 
-## Desinstallation
+## Uninstall
 
-Deux options :
-1. **Depuis l'app** -- menu Reglages -> "Uninstall PortWatch..." avec confirmation
-2. **Script standalone** -- `./uninstall.sh`
+Two options:
+1. **From the app** — Settings > "Uninstall PortWatch..." (with confirmation)
+2. **Standalone script** — `./uninstall.sh`
 
-Les deux suppriment l'app, les preferences (`UserDefaults`), caches, logs et processus residuels.
+Both remove the .app, UserDefaults preferences, caches, logs, and any residual process.
 
-## Structure du projet
+## Build from Source
 
-```
-PortWatch/
-  Sources/
-    PortWatchApp.swift       # Entry point, MenuBarExtra, UI complete
-    PortEntry.swift          # Modeles de donnees (TCPState, PortEntry, PortEntryDisplay, ProjectGroup, KillReport)
-    PortScanner.swift        # Scan libproc bas niveau + kill sequence
-    PortMonitor.swift        # Boucle de scan, CPU %, conflits, notifications
-    ProjectDetector.swift    # Detection projet (Docker, git, ports connus)
-    NotificationManager.swift # Notifications macOS
-    AppSettings.swift        # Reglages persistants (UserDefaults)
-    SettingsView.swift       # Vue reglages + desinstallation + FlowLayout
-  Info.plist                 # LSUIElement=true (pas d'icone dock)
-PortWatchTests/
-  PortWatchTests.swift       # Tests
-uninstall.sh                 # Desinstalleur standalone
+Requires Xcode (free, App Store) on macOS 15+.
+
+```bash
+# Debug build
+xcodebuild -scheme PortWatch -configuration Debug build
+
+# Release build
+xcodebuild -scheme PortWatch -configuration Release build
+
+# Run tests (81 tests)
+xcodebuild -scheme PortWatch test
 ```
 
-## Licence
+## Contributing
 
-Usage personnel.
+### Git Workflow
+
+```
+feature/xxx ──merge──> dev ──PR──> main ──auto──> GitHub Release
+                        |           |
+                     CI tests    CI tests + review
+```
+
+1. Create a branch from `dev`: `git checkout dev && git checkout -b feature/my-feature`
+2. Code, commit, push
+3. Merge into `dev` (CI tests must pass)
+4. When ready for release: create a PR `dev` -> `main`
+5. PR requires CI tests + review from @Alex375
+6. On merge to `main`: GitHub Actions automatically builds a Release .app and creates a GitHub Release
+
+### Version Bumping
+Update `CFBundleShortVersionString` in `PortWatch/Info.plist` before merging to `main`.
+
+## Stack
+
+| Component | Technology |
+|---|---|
+| Language | Swift 6.0 |
+| UI | SwiftUI MenuBarExtra (.window style) |
+| Concurrency | @Observable, @MainActor, Task.detached, TaskGroup |
+| Port scanning | Native macOS libproc APIs (import Darwin) |
+| Docker detection | docker ps --format json |
+| Persistence | UserDefaults |
+| Notifications | UNUserNotificationCenter |
+| CI/CD | GitHub Actions (macos-15 runner) |
+| Min. macOS | 15.0 (Sequoia) |
+
+## License
+
+Personal use.
