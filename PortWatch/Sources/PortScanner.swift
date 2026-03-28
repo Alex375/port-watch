@@ -128,9 +128,15 @@ enum PortScanner: Sendable {
 
     // MARK: - Process lifecycle
 
-    /// Check if a PID is still alive.
+    /// Check if a PID is still alive. Returns true if process exists (even if we lack permission to signal it).
     static func isAlive(pid: Int32) -> Bool {
-        kill(pid, 0) == 0 || errno == EPERM
+        let result = kill(pid, 0)
+        if result == 0 { return true }
+        // kill returned -1: check errno immediately
+        let savedErrno = errno
+        // EPERM = process exists but we don't have permission to signal it
+        // ESRCH = no such process
+        return savedErrno == EPERM
     }
 
     /// Result of a kill operation — always reports what happened.

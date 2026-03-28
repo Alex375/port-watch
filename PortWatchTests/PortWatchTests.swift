@@ -750,8 +750,8 @@ final class AppSettingsTests: XCTestCase {
         let savedCPU = settings.cpuThreshold
         let savedRAM = settings.ramThresholdMB
         let savedRefresh = settings.refreshInterval
-        let savedNotif = settings.notificationsEnabled
-        let savedConflict = settings.notifyPortConflicts
+        let savedNotif = settings.notifyNewPorts
+        let savedConflict = settings.notifyConflicts
         let savedFront = settings.frontKeywords
         let savedBack = settings.backKeywords
         let savedDB = settings.dbKeywords
@@ -762,8 +762,8 @@ final class AppSettingsTests: XCTestCase {
             settings.cpuThreshold = savedCPU
             settings.ramThresholdMB = savedRAM
             settings.refreshInterval = savedRefresh
-            settings.notificationsEnabled = savedNotif
-            settings.notifyPortConflicts = savedConflict
+            settings.notifyNewPorts = savedNotif
+            settings.notifyConflicts = savedConflict
             settings.frontKeywords = savedFront
             settings.backKeywords = savedBack
             settings.dbKeywords = savedDB
@@ -775,8 +775,8 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.cpuThreshold, 50.0)
         XCTAssertEqual(settings.ramThresholdMB, 500.0)
         XCTAssertEqual(settings.refreshInterval, 10.0)
-        XCTAssertEqual(settings.notificationsEnabled, false)
-        XCTAssertEqual(settings.notifyPortConflicts, true)
+        XCTAssertEqual(settings.notifyNewPorts, 0)
+        XCTAssertEqual(settings.notifyConflicts, 1)
         XCTAssertEqual(settings.frontKeywords, ["front", "web", "client", "ui", "vite", "webpack", "next", "nuxt"])
         XCTAssertEqual(settings.backKeywords, ["back", "api", "server", "uvicorn", "gunicorn", "flask", "django", "express", "fastify"])
         XCTAssertEqual(settings.dbKeywords, ["db", "database"])
@@ -789,8 +789,8 @@ final class AppSettingsTests: XCTestCase {
         let savedCPU = settings.cpuThreshold
         let savedRAM = settings.ramThresholdMB
         let savedRefresh = settings.refreshInterval
-        let savedNotif = settings.notificationsEnabled
-        let savedConflict = settings.notifyPortConflicts
+        let savedNotif = settings.notifyNewPorts
+        let savedConflict = settings.notifyConflicts
         let savedFront = settings.frontKeywords
         let savedBack = settings.backKeywords
         let savedDB = settings.dbKeywords
@@ -801,8 +801,8 @@ final class AppSettingsTests: XCTestCase {
             settings.cpuThreshold = savedCPU
             settings.ramThresholdMB = savedRAM
             settings.refreshInterval = savedRefresh
-            settings.notificationsEnabled = savedNotif
-            settings.notifyPortConflicts = savedConflict
+            settings.notifyNewPorts = savedNotif
+            settings.notifyConflicts = savedConflict
             settings.frontKeywords = savedFront
             settings.backKeywords = savedBack
             settings.dbKeywords = savedDB
@@ -813,8 +813,8 @@ final class AppSettingsTests: XCTestCase {
         settings.cpuThreshold = 90.0
         settings.ramThresholdMB = 2000.0
         settings.refreshInterval = 30.0
-        settings.notificationsEnabled = true
-        settings.notifyPortConflicts = false
+        settings.notifyNewPorts = 2
+        settings.notifyConflicts = 0
         settings.frontKeywords = ["custom"]
         settings.backKeywords = ["custom"]
         settings.dbKeywords = ["custom"]
@@ -824,8 +824,8 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.cpuThreshold, 90.0)
         XCTAssertEqual(settings.ramThresholdMB, 2000.0)
         XCTAssertEqual(settings.refreshInterval, 30.0)
-        XCTAssertEqual(settings.notificationsEnabled, true)
-        XCTAssertEqual(settings.notifyPortConflicts, false)
+        XCTAssertEqual(settings.notifyNewPorts, 2)
+        XCTAssertEqual(settings.notifyConflicts, 0)
 
         // Reset
         settings.resetToDefaults()
@@ -834,8 +834,8 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.cpuThreshold, 50.0)
         XCTAssertEqual(settings.ramThresholdMB, 500.0)
         XCTAssertEqual(settings.refreshInterval, 10.0)
-        XCTAssertEqual(settings.notificationsEnabled, false)
-        XCTAssertEqual(settings.notifyPortConflicts, true)
+        XCTAssertEqual(settings.notifyNewPorts, 0)
+        XCTAssertEqual(settings.notifyConflicts, 1)
         XCTAssertEqual(settings.frontKeywords, ["front", "web", "client", "ui", "vite", "webpack", "next", "nuxt"])
         XCTAssertEqual(settings.backKeywords, ["back", "api", "server", "uvicorn", "gunicorn", "flask", "django", "express", "fastify"])
         XCTAssertEqual(settings.dbKeywords, ["db", "database"])
