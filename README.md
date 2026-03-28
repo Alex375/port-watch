@@ -105,7 +105,7 @@ Both remove the .app, UserDefaults preferences, caches, logs, and any residual p
 
 ## Build from Source
 
-Requires Xcode (free, App Store) on macOS 15+.
+Requires Xcode (free, App Store) on macOS 26+.
 
 ```bash
 # Debug build
@@ -149,8 +149,8 @@ Update `CFBundleShortVersionString` in `PortWatch/Info.plist` before merging to 
 | Docker detection | docker ps --format json |
 | Persistence | UserDefaults |
 | Notifications | UNUserNotificationCenter |
-| CI/CD | GitHub Actions (macos-15 runner) |
-| Min. macOS | 15.0 (Sequoia) |
+| CI/CD | GitHub Actions (macos-26 runner) |
+| Min. macOS | 26.0 (Tahoe) |
 
 ## License
 
