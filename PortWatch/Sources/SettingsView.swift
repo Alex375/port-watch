@@ -23,6 +23,34 @@ struct SettingsView: View {
                 Spacer()
             }
 
+            // Update banner
+            if updater.updateAvailable, let version = updater.latestVersion {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .foregroundStyle(.blue)
+                        .font(.caption)
+                    Text("v\(version) available")
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                    Spacer()
+                    if updater.isDownloading {
+                        ProgressView(value: updater.downloadProgress)
+                            .frame(width: 60)
+                            .controlSize(.mini)
+                    } else {
+                        Button("Update") {
+                            Task { await updater.performUpdate() }
+                        }
+                        .font(.caption2)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.mini)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+            }
+
             // Thresholds
             VStack(alignment: .leading, spacing: 8) {
                 Text("Alert thresholds")
