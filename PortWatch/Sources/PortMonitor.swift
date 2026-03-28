@@ -163,10 +163,18 @@ final class PortMonitor {
         killingPIDs.remove(entry.pid)
 
         if result.success {
-            lastKillReport = KillReport(
-                message: "Killed \(result.processName) on :\(result.port) (PID \(result.pid))",
-                isError: false
-            )
+            // Final verification: double-check the process is actually dead
+            if PortScanner.isAlive(pid: entry.pid) {
+                lastKillReport = KillReport(
+                    message: "Kill of \(result.processName) on :\(result.port) (PID \(result.pid)) reported success but process is still alive",
+                    isError: true
+                )
+            } else {
+                lastKillReport = KillReport(
+                    message: "Killed \(result.processName) on :\(result.port) (PID \(result.pid))",
+                    isError: false
+                )
+            }
         } else {
             lastKillReport = KillReport(
                 message: "Failed to kill \(result.processName) on :\(result.port) (PID \(result.pid)): \(result.error ?? "unknown error")",
@@ -177,25 +185,42 @@ final class PortMonitor {
         await performScan()
     }
 
-    /// Kill all processes in a project group and report results.
+    /// Kill all processes in a project group in parallel and report results.
     func killProject(_ group: ProjectGroup) async {
         lastKillReport = nil
-        var successes = 0
-        var failures: [String] = []
 
         // Deduplicate by PID (multiple ports can belong to same process)
+        var uniqueEntries: [PortEntry] = []
         var seenPIDs = Set<Int32>()
         for display in group.entries {
-            guard !seenPIDs.contains(display.entry.pid) else { continue }
-            seenPIDs.insert(display.entry.pid)
+            guard seenPIDs.insert(display.entry.pid).inserted else { continue }
+            uniqueEntries.append(display.entry)
             killingPIDs.insert(display.entry.pid)
+        }
 
-            let result = await Task.detached(priority: .userInitiated) {
-                await PortScanner.killProcess(pid: display.entry.pid, port: display.entry.port, processName: display.entry.processName)
-            }.value
+        // Kill all in parallel
+        let results = await withTaskGroup(of: PortScanner.KillResult.self) { taskGroup in
+            for entry in uniqueEntries {
+                taskGroup.addTask {
+                    await PortScanner.killProcess(pid: entry.pid, port: entry.port, processName: entry.processName)
+                }
+            }
+            var collected: [PortScanner.KillResult] = []
+            for await result in taskGroup {
+                collected.append(result)
+            }
+            return collected
+        }
 
-            killingPIDs.remove(display.entry.pid)
+        // Clear all killing indicators
+        for entry in uniqueEntries {
+            killingPIDs.remove(entry.pid)
+        }
 
+        // Tally results
+        var successes = 0
+        var failures: [String] = []
+        for result in results {
             if result.success {
                 successes += 1
             } else {
@@ -203,14 +228,25 @@ final class PortMonitor {
             }
         }
 
+        // Final verification: re-check each PID that was reported as killed
+        var zombieWarnings: [String] = []
+        for result in results where result.success {
+            if PortScanner.isAlive(pid: result.pid) {
+                zombieWarnings.append(":\(result.port) \(result.processName) (PID \(result.pid)) still alive after kill reported success")
+            }
+        }
+
         let total = successes + failures.count
-        if failures.isEmpty {
+        if failures.isEmpty && zombieWarnings.isEmpty {
             lastKillReport = KillReport(
                 message: "\(group.projectName): \(successes) process\(successes == 1 ? "" : "es") killed",
                 isError: false
             )
-        } else {
+        } else if !failures.isEmpty {
             let msg = "\(group.projectName): \(successes)/\(total) killed, \(failures.count) failed\n" + failures.joined(separator: "\n")
+            lastKillReport = KillReport(message: msg, isError: true)
+        } else {
+            let msg = "\(group.projectName): kills reported success but verification failed\n" + zombieWarnings.joined(separator: "\n")
             lastKillReport = KillReport(message: msg, isError: true)
         }
 
