@@ -9,24 +9,45 @@ struct PortWatchApp: App {
             MenuContentView(monitor: monitor)
                 .frame(width: 420)
         } label: {
-            Label("\(monitor.portCount)", systemImage: "network")
+            Label("\(monitor.portCount)", systemImage: menuBarIcon)
         }
         .menuBarExtraStyle(.window)
+    }
+
+    private var menuBarIcon: String {
+        if monitor.hasZombie {
+            return "eye.trianglebadge.exclamationmark"
+        }
+        let count = monitor.projectPortCount
+        switch count {
+        case 0:     return "eye.slash"
+        case 1...3: return "eye"
+        case 4...8: return "eye.fill"
+        default:    return "eye.trianglebadge.exclamationmark"
+        }
     }
 }
 
 struct MenuContentView: View {
     @Bindable var monitor: PortMonitor
     @State private var showSettings = false
+    @State private var isRefreshing = false
+    @State private var updater = UpdateChecker.shared
+    @State private var hasCheckedUpdate = false
 
     var body: some View {
-        if showSettings {
-            SettingsView(settings: monitor.settings) {
-                showSettings = false
+        Group {
+            if showSettings {
+                SettingsView(settings: monitor.settings) {
+                    showSettings = false
+                }
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+            } else {
+                mainContent
+                    .transition(.move(edge: .leading).combined(with: .opacity))
             }
-        } else {
-            mainContent
         }
+        .animation(.easeInOut(duration: 0.2), value: showSettings)
     }
 
     @ViewBuilder
@@ -45,12 +66,19 @@ struct MenuContentView: View {
                 }
                 Spacer()
                 Button {
-                    Task { await monitor.performScan() }
+                    Task {
+                        isRefreshing = true
+                        await monitor.performScan()
+                        isRefreshing = false
+                    }
                 } label: {
                     Image(systemName: "arrow.clockwise")
                         .font(.caption)
+                        .rotationEffect(.degrees(isRefreshing ? 360 : 0))
+                        .animation(isRefreshing ? .linear(duration: 0.8).repeatForever(autoreverses: false) : .default, value: isRefreshing)
                 }
                 .buttonStyle(.borderless)
+                .disabled(isRefreshing)
             }
             .padding(.horizontal, 14)
             .padding(.top, 12)
@@ -78,15 +106,51 @@ struct MenuContentView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 6)
                 .background(report.isError ? Color.red.opacity(0.08) : Color.green.opacity(0.08))
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
+            // Update banner
+            if updater.updateAvailable, let version = updater.latestVersion {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .foregroundStyle(.blue)
+                        .font(.caption)
+                    Text("v\(version) available")
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                    Spacer()
+                    if updater.isDownloading {
+                        ProgressView(value: updater.downloadProgress)
+                            .frame(width: 60)
+                            .controlSize(.mini)
+                    } else {
+                        Button("Update") {
+                            Task { await updater.performUpdate() }
+                        }
+                        .font(.caption2)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.mini)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(Color.blue.opacity(0.08))
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
 
             Divider()
 
             if monitor.entries.isEmpty {
-                Text("No open ports detected")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 20)
+                VStack(spacing: 8) {
+                    Image(systemName: "eye.slash")
+                        .font(.title2)
+                        .foregroundStyle(.tertiary)
+                    Text("No open ports detected")
+                        .foregroundStyle(.secondary)
+                        .font(.callout)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 30)
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
@@ -101,8 +165,6 @@ struct MenuContentView: View {
                 .frame(maxHeight: 600)
                 .fixedSize(horizontal: false, vertical: true)
             }
-
-            Divider()
 
             // Kill confirmation banner
             if let entry = monitor.pendingKillConfirmation {
@@ -141,6 +203,7 @@ struct MenuContentView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .background(Color.orange.opacity(0.06))
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
             Divider()
@@ -164,7 +227,14 @@ struct MenuContentView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
-
+        }
+        .animation(.easeInOut(duration: 0.25), value: monitor.lastKillReport?.message)
+        .animation(.easeInOut(duration: 0.25), value: monitor.pendingKillConfirmation?.pid)
+        .task {
+            if !hasCheckedUpdate {
+                hasCheckedUpdate = true
+                await updater.checkForUpdate()
+            }
         }
     }
 
@@ -195,15 +265,9 @@ struct MenuContentView: View {
                             .controlSize(.mini)
                             .frame(width: 14, height: 14)
                     } else {
-                        Button {
+                        HoverButton(icon: "xmark.circle", color: .red, size: .caption, help: "Kill all processes in \(group.projectName)") {
                             Task { await monitor.killProject(group) }
-                        } label: {
-                            Image(systemName: "xmark.circle")
-                                .font(.caption)
-                                .foregroundStyle(.red.opacity(0.7))
                         }
-                        .buttonStyle(.borderless)
-                        .help("Kill all processes in \(group.projectName)")
                     }
                 }
             }
@@ -211,6 +275,7 @@ struct MenuContentView: View {
             // Port entries
             ForEach(group.entries) { display in
                 portRow(display)
+                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
             }
         }
     }
@@ -242,36 +307,24 @@ struct MenuContentView: View {
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                     // Open in browser
-                    Button {
+                    HoverButton(icon: "globe", color: .blue, help: "Open in browser") {
                         if let url = URL(string: "http://localhost:\(display.entry.port)") {
                             NSWorkspace.shared.open(url)
                         }
-                    } label: {
-                        Image(systemName: "globe")
-                            .font(.caption2)
-                            .foregroundStyle(.blue)
                     }
-                    .buttonStyle(.borderless)
-                    .help("Open in browser")
                     // Kill
                     if monitor.killingPIDs.contains(display.entry.pid) {
                         ProgressView()
                             .controlSize(.mini)
                             .frame(width: 12, height: 12)
                     } else {
-                        Button {
+                        HoverButton(icon: "xmark.circle.fill", color: .red, help: "Kill process") {
                             if display.entry.projectName == "Other" {
                                 monitor.pendingKillConfirmation = display.entry
                             } else {
                                 Task { await monitor.killPort(display.entry) }
                             }
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.caption2)
-                                .foregroundStyle(.red.opacity(0.6))
                         }
-                        .buttonStyle(.borderless)
-                        .help("Kill process")
                     }
                 }
                 if !display.commandSummary.isEmpty {
@@ -369,5 +422,32 @@ struct MenuContentView: View {
         if display.entry.tcpState.isZombie { return .red }
         if let cpu = display.cpuPercent, cpu > monitor.settings.cpuThreshold { return .orange }
         return .green
+    }
+}
+
+// MARK: - Hover Button
+
+struct HoverButton: View {
+    let icon: String
+    let color: Color
+    var size: Font = .caption2
+    var help: String = ""
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(size)
+                .foregroundStyle(color.opacity(isHovered ? 1.0 : 0.5))
+                .scaleEffect(isHovered ? 1.2 : 1.0)
+                .animation(.easeInOut(duration: 0.15), value: isHovered)
+        }
+        .buttonStyle(.borderless)
+        .help(help)
+        .onHover { hovering in
+            isHovered = hovering
+        }
     }
 }

@@ -9,6 +9,16 @@ final class PortMonitor {
 
     var portCount: Int { entries.count }
 
+    /// Port count excluding "Other" — used for menubar icon state.
+    var projectPortCount: Int {
+        entries.filter { $0.entry.projectName != "Other" }.count
+    }
+
+    /// Whether any entry is a zombie — used for menubar icon.
+    var hasZombie: Bool {
+        entries.contains { $0.entry.tcpState.isZombie }
+    }
+
     var groupedEntries: [ProjectGroup] {
         let grouped = Dictionary(grouping: entries) { $0.entry.projectName }
         return grouped.map { ProjectGroup(projectName: $0.key, entries: $0.value) }
@@ -102,7 +112,7 @@ final class PortMonitor {
         self.conflictPorts = newConflicts
 
         // Notifications
-        if settings.notificationsEnabled {
+        do {
             let currentPorts = Set(rawEntries.map(\.port))
 
             // New ports
@@ -110,17 +120,22 @@ final class PortMonitor {
                 let newPorts = currentPorts.subtracting(knownPorts)
                 for port in newPorts {
                     if let entry = rawEntries.first(where: { $0.port == port }) {
-                        NotificationManager.shared.notifyNewPort(
-                            port: port, processName: entry.processName, projectName: entry.projectName)
+                        let isProject = entry.projectName != "Other"
+                        if settings.shouldNotifyNewPort(isProject: isProject) {
+                            NotificationManager.shared.notifyNewPort(
+                                port: port, processName: entry.processName, projectName: entry.projectName)
+                        }
                     }
                 }
             }
 
             // New conflicts
-            if settings.notifyPortConflicts {
-                let freshConflicts = newConflicts.subtracting(previousConflicts)
-                for port in freshConflicts {
-                    let names = rawEntries.filter { $0.port == port }.map(\.processName)
+            let freshConflicts = newConflicts.subtracting(previousConflicts)
+            for port in freshConflicts {
+                let conflictEntries = rawEntries.filter { $0.port == port }
+                let hasProject = conflictEntries.contains { $0.projectName != "Other" }
+                if settings.shouldNotifyConflict(hasProject: hasProject) {
+                    let names = conflictEntries.map(\.processName)
                     NotificationManager.shared.notifyPortConflict(port: port, processNames: names)
                 }
             }

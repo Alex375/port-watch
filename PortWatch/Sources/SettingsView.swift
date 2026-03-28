@@ -5,6 +5,7 @@ struct SettingsView: View {
     @Bindable var settings: AppSettings
     var onClose: () -> Void
     @State private var showUninstallConfirm = false
+    @State private var updater = UpdateChecker.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -75,22 +76,41 @@ struct SettingsView: View {
             Divider()
 
             // Notifications
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 Text("Notifications")
                     .font(.subheadline)
                     .fontWeight(.medium)
                     .foregroundStyle(.secondary)
 
-                Toggle("New port detected", isOn: $settings.notificationsEnabled)
-                    .font(.caption)
-                    .onChange(of: settings.notificationsEnabled) { _, enabled in
-                        if enabled {
-                            NotificationManager.shared.requestPermission()
-                        }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("New ports")
+                        .font(.caption2)
+                    Picker("", selection: $settings.notifyNewPorts) {
+                        Text("Off").tag(0)
+                        Text("Projects").tag(1)
+                        Text("All").tag(2)
                     }
+                    .pickerStyle(.segmented)
+                    .controlSize(.mini)
+                    .onChange(of: settings.notifyNewPorts) { _, val in
+                        if val > 0 { NotificationManager.shared.requestPermission() }
+                    }
+                }
 
-                Toggle("Port conflicts", isOn: $settings.notifyPortConflicts)
-                    .font(.caption)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Port conflicts")
+                        .font(.caption2)
+                    Picker("", selection: $settings.notifyConflicts) {
+                        Text("Off").tag(0)
+                        Text("Projects").tag(1)
+                        Text("All").tag(2)
+                    }
+                    .pickerStyle(.segmented)
+                    .controlSize(.mini)
+                    .onChange(of: settings.notifyConflicts) { _, val in
+                        if val > 0 { NotificationManager.shared.requestPermission() }
+                    }
+                }
             }
 
             Divider()
@@ -106,6 +126,43 @@ struct SettingsView: View {
                 keywordRow(label: "Back", icon: "server.rack", color: Color(nsColor: .systemIndigo), keywords: $settings.backKeywords)
                 keywordRow(label: "DB", icon: "externaldrive.fill", color: Color(nsColor: .systemBrown), keywords: $settings.dbKeywords)
                 keywordRow(label: "DB processes", icon: "externaldrive.fill", color: Color(nsColor: .systemBrown), keywords: $settings.dbProcessNames)
+            }
+
+            Divider()
+
+            // Version & Update
+            VStack(alignment: .leading, spacing: 6) {
+                Text("About")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.secondary)
+
+                HStack {
+                    Text("PortWatch v\(updater.currentVersion)")
+                        .font(.caption)
+                    if updater.updateAvailable, let v = updater.latestVersion {
+                        Text("v\(v) available")
+                            .font(.caption2)
+                            .foregroundStyle(.blue)
+                    }
+                    Spacer()
+                    if updater.isChecking {
+                        ProgressView()
+                            .controlSize(.mini)
+                    } else {
+                        Button("Check for update") {
+                            Task { await updater.checkForUpdate() }
+                        }
+                        .font(.caption2)
+                        .buttonStyle(.borderless)
+                    }
+                }
+
+                if let err = updater.error {
+                    Text(err)
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                }
             }
 
             Button {

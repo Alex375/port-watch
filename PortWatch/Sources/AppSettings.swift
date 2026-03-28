@@ -16,11 +16,31 @@ final class AppSettings {
     var refreshInterval: TimeInterval {
         didSet { UserDefaults.standard.set(refreshInterval, forKey: "refreshInterval") }
     }
-    var notificationsEnabled: Bool {
-        didSet { UserDefaults.standard.set(notificationsEnabled, forKey: "notificationsEnabled") }
+    /// 0 = Off, 1 = Projects only, 2 = All (projects + other)
+    var notifyNewPorts: Int {
+        didSet { UserDefaults.standard.set(notifyNewPorts, forKey: "notifyNewPorts") }
     }
-    var notifyPortConflicts: Bool {
-        didSet { UserDefaults.standard.set(notifyPortConflicts, forKey: "notifyPortConflicts") }
+    var notifyConflicts: Int {
+        didSet { UserDefaults.standard.set(notifyConflicts, forKey: "notifyConflicts") }
+    }
+
+    /// Whether any notification is enabled.
+    var notificationsEnabled: Bool {
+        notifyNewPorts > 0 || notifyConflicts > 0
+    }
+
+    /// Should notify for a new port given its project status.
+    func shouldNotifyNewPort(isProject: Bool) -> Bool {
+        if notifyNewPorts == 2 { return true }
+        if notifyNewPorts == 1 && isProject { return true }
+        return false
+    }
+
+    /// Should notify for a conflict given its project status.
+    func shouldNotifyConflict(hasProject: Bool) -> Bool {
+        if notifyConflicts == 2 { return true }
+        if notifyConflicts == 1 && hasProject { return true }
+        return false
     }
 
     // MARK: - Role detection keywords
@@ -51,8 +71,10 @@ final class AppSettings {
             "cpuThreshold": 50.0,
             "ramThresholdMB": 500.0,
             "refreshInterval": 10.0,
-            "notificationsEnabled": false,
-            "notifyPortConflicts": true,
+            "notifyProjects": false,
+            "notifyOther": false,
+            "notifyNewPorts": 0,
+            "notifyConflicts": 1,
             "frontKeywords": defaultFront,
             "backKeywords": defaultBack,
             "dbKeywords": defaultDB,
@@ -62,8 +84,8 @@ final class AppSettings {
         self.cpuThreshold = defaults.double(forKey: "cpuThreshold")
         self.ramThresholdMB = defaults.double(forKey: "ramThresholdMB")
         self.refreshInterval = defaults.double(forKey: "refreshInterval")
-        self.notificationsEnabled = defaults.bool(forKey: "notificationsEnabled")
-        self.notifyPortConflicts = defaults.bool(forKey: "notifyPortConflicts")
+        self.notifyNewPorts = defaults.integer(forKey: "notifyNewPorts")
+        self.notifyConflicts = defaults.integer(forKey: "notifyConflicts")
         self.frontKeywords = defaults.stringArray(forKey: "frontKeywords") ?? defaultFront
         self.backKeywords = defaults.stringArray(forKey: "backKeywords") ?? defaultBack
         self.dbKeywords = defaults.stringArray(forKey: "dbKeywords") ?? defaultDB
@@ -74,8 +96,8 @@ final class AppSettings {
         cpuThreshold = 50.0
         ramThresholdMB = 500.0
         refreshInterval = 10.0
-        notificationsEnabled = false
-        notifyPortConflicts = true
+        notifyNewPorts = 0
+        notifyConflicts = 1
         frontKeywords = ["front", "web", "client", "ui", "vite", "webpack", "next", "nuxt"]
         backKeywords = ["back", "api", "server", "uvicorn", "gunicorn", "flask", "django", "express", "fastify"]
         dbKeywords = ["db", "database"]

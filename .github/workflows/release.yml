@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  release:
+    runs-on: macos-15
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.app/Contents/Developer
+
+      - name: Build Release
+        run: xcodebuild -scheme PortWatch -configuration Release build
+
+      - name: Get version from Info.plist
+        id: version
+        run: |
+          VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" PortWatch/Info.plist)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version $VERSION"
+
+      - name: Find .app path
+        id: app
+        run: |
+          APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "PortWatch.app" -path "*/Release/*" | head -1)
+          echo "path=$APP_PATH" >> "$GITHUB_OUTPUT"
+          echo "Found app at $APP_PATH"
+
+      - name: Check if release already exists
+        id: check
+        run: |
+          if gh release view "v${{ steps.version.outputs.version }}" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Zip app
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          cd "$(dirname "${{ steps.app.outputs.path }}")"
+          zip -r "${{ github.workspace }}/PortWatch.zip" PortWatch.app
+
+      - name: Run tests
+        run: xcodebuild -scheme PortWatch -configuration Debug test
+
+      - name: Create GitHub Release
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          gh release create "v${{ steps.version.outputs.version }}" \
+            --title "PortWatch v${{ steps.version.outputs.version }}" \
+            --generate-notes \
+            "${{ github.workspace }}/PortWatch.zip"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

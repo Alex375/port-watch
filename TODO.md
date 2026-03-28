@@ -16,4 +16,11 @@
   - [x] Mots-clés de reconnaissance Front/Back/DB/Cache configurables dans les réglages
 
 ## Plus tard
-- [ ] **Auto-update** — script shell qui check GitHub Releases et remplace le .app automatiquement
+- [x] **Auto-update** — check GitHub API pour nouvelle version, notification, téléchargement + remplacement du .app via script helper, relance automatique
+- [x] **Build release** — générer le .app distribuable (Release config)
+- [x] **GitHub Release** — créer une release avec le .app zippé en artifact
+- [x] **CI** — GitHub Actions pour build + tests automatiques sur chaque push
+- [x] **Animations/Polish UI** — transitions liste ↔ settings, rotation refresh, fade ports, banners animés
+- [x] **Icône menubar** — eye dynamique (eye.slash / eye / eye.fill / eye.trianglebadge.exclamationmark) selon charge projet
+- [x] **Icône app** — oeil blanc sur fond bleu dégradé, toutes tailles macOS (16-1024px)
+- [x] **Filtres notifications** — section notifications séparée pour "Other" et pour les projets identifiés (pouvoir activer/désactiver indépendamment)
