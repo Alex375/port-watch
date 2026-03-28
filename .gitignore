@@ -42,8 +42,8 @@ Package.resolved
 *.mobileprovision
 *.provisionprofile
 
-# Screenshots
-screenshots/
+# Screenshots (keep committed ones, ignore temp captures)
+screenshots/Screenshot*
 
 # IDE
 .idea/

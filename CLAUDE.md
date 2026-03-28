@@ -6,8 +6,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 PortWatch is a macOS menubar app (Swift 6 + SwiftUI) that monitors open TCP ports, identifies associated processes and projects, and lets developers kill them. It uses `MenuBarExtra` with `.window` style for a rich popover UI in the system tray.
 
-The full spec is in `cahier-des-charges-portwatch.md` (in French).
-
 ## Build & Run
 
 ```bash
@@ -38,7 +36,8 @@ The app is unsigned (no Apple Developer certificate). First launch requires: rig
 | `PortWatch/Sources/NotificationManager.swift` | `@MainActor` singleton wrapping `UNUserNotificationCenter`. Sends notifications for new port detection and port conflicts. |
 | `PortWatch/Sources/AppSettings.swift` | `@MainActor @Observable` singleton persisted via `UserDefaults`. Stores thresholds (CPU, RAM), refresh interval, notification toggles, and configurable role detection keywords. |
 | `PortWatch/Sources/SettingsView.swift` | SwiftUI settings panel (inline, replaces main content). Sliders for thresholds/refresh, notification toggles, editable keyword tags (with `FlowLayout`), reset to defaults, and uninstall with confirmation. |
-| `PortWatchTests/PortWatchTests.swift` | Test target (placeholder). |
+| `PortWatchTests/PortWatchTests.swift` | 81 unit tests (TCPState, PortEntry, PortScanner, ProjectDetector, AppSettings, models). |
+| `PortWatch/Sources/UpdateChecker.swift` | `@MainActor @Observable` singleton. Checks GitHub Releases API for new versions, downloads and replaces .app via helper shell script. |
 | `uninstall.sh` | Standalone shell uninstaller (kills process, removes .app, prefs, caches, logs). |
 | `PortWatch/Info.plist` | Bundle config. `LSUIElement = true` (no dock icon). |
 
@@ -117,6 +116,31 @@ Optional (off by default), via `UNUserNotificationCenter`:
 - **Port conflict detection** — multiple PIDs on the same port are flagged with a yellow warning badge.
 - Zombie detection: processes in `CLOSE_WAIT` or `TIME_WAIT` state, marked with a red badge.
 - CPU/RAM warnings are conditional — only shown when exceeding configurable thresholds (default: 50% CPU, 500 MB RAM).
+
+## Git Workflow
+
+### Branches
+- **`main`** — production, protégée. Chaque merge déclenche un build Release + création automatique d'une GitHub Release avec le .app zippé.
+- **`dev`** — intégration. Les feature branches mergent ici. Tests CI obligatoires.
+- **`feature/xxx`** ou **`fix/xxx`** — branches de travail, créées depuis `dev`.
+
+### Flow
+```
+feature/xxx ──merge──> dev ──PR──> main ──auto──> GitHub Release
+                        │           │
+                     Tests CI    Tests CI + Review @Alex375
+```
+
+### Protections
+- **`main`** : push direct interdit, PR obligatoire, tests CI requis, review CODEOWNER (@Alex375) requise pour les contributeurs externes, admin peut bypass review.
+- **`dev`** : tests CI requis.
+
+### Versioning
+La version est lue depuis `Info.plist` (`CFBundleShortVersionString`). Pour bumper la version, modifier ce champ dans la PR vers `main`. Le workflow Release crée automatiquement le tag `vX.Y.Z` et la GitHub Release.
+
+### CI/CD (GitHub Actions)
+- **`.github/workflows/ci.yml`** — build debug + tests sur chaque push vers `dev` et chaque PR vers `dev`/`main`.
+- **`.github/workflows/release.yml`** — build Release + zip .app + création GitHub Release sur chaque push vers `main`. Skip si la version existe déjà.
 
 ## Out of Scope
 
