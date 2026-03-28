@@ -1,0 +1,353 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A1000001 /* PortWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001 /* PortWatchApp.swift */; };
+		A1000002 /* PortWatchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000002 /* PortWatchTests.swift */; };
+		A1000003 /* PortEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000006 /* PortEntry.swift */; };
+		A1000004 /* PortScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000007 /* PortScanner.swift */; };
+		A1000005 /* PortMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000008 /* PortMonitor.swift */; };
+		A1000006 /* ProjectDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000009 /* ProjectDetector.swift */; };
+		A1000007 /* NotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000A /* NotificationManager.swift */; };
+		A1000008 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000B /* AppSettings.swift */; };
+		A1000009 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000C /* SettingsView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A5000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A3000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A4000001;
+			remoteInfo = PortWatch;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		A2000001 /* PortWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortWatchApp.swift; sourceTree = "<group>"; };
+		A2000002 /* PortWatchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortWatchTests.swift; sourceTree = "<group>"; };
+		A2000003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A2000004 /* PortWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PortWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A2000005 /* PortWatchTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PortWatchTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A2000006 /* PortEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortEntry.swift; sourceTree = "<group>"; };
+		A2000007 /* PortScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortScanner.swift; sourceTree = "<group>"; };
+		A2000008 /* PortMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortMonitor.swift; sourceTree = "<group>"; };
+		A2000009 /* ProjectDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectDetector.swift; sourceTree = "<group>"; };
+		A200000A /* NotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationManager.swift; sourceTree = "<group>"; };
+		A200000B /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
+		A200000C /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A6000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A6000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A7000001 = {
+			isa = PBXGroup;
+			children = (
+				A7000002 /* PortWatch */,
+				A7000003 /* PortWatchTests */,
+				A7000004 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A7000002 /* PortWatch */ = {
+			isa = PBXGroup;
+			children = (
+				A2000003 /* Info.plist */,
+				A7000005 /* Sources */,
+			);
+			path = PortWatch;
+			sourceTree = "<group>";
+		};
+		A7000003 /* PortWatchTests */ = {
+			isa = PBXGroup;
+			children = (
+				A2000002 /* PortWatchTests.swift */,
+			);
+			path = PortWatchTests;
+			sourceTree = "<group>";
+		};
+		A7000004 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A2000004 /* PortWatch.app */,
+				A2000005 /* PortWatchTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A7000005 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				A2000001 /* PortWatchApp.swift */,
+				A2000006 /* PortEntry.swift */,
+				A2000007 /* PortScanner.swift */,
+				A2000008 /* PortMonitor.swift */,
+				A2000009 /* ProjectDetector.swift */,
+				A200000A /* NotificationManager.swift */,
+				A200000B /* AppSettings.swift */,
+				A200000C /* SettingsView.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A4000001 /* PortWatch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A9000003 /* Build configuration list for PBXNativeTarget "PortWatch" */;
+			buildPhases = (
+				A8000001 /* Sources */,
+				A6000001 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PortWatch;
+			productName = PortWatch;
+			productReference = A2000004 /* PortWatch.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A4000002 /* PortWatchTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A9000006 /* Build configuration list for PBXNativeTarget "PortWatchTests" */;
+			buildPhases = (
+				A8000002 /* Sources */,
+				A6000002 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A5000002 /* PBXTargetDependency */,
+			);
+			name = PortWatchTests;
+			productName = PortWatchTests;
+			productReference = A2000005 /* PortWatchTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A3000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+			};
+			buildConfigurationList = A9000001 /* Build configuration list for PBXProject "PortWatch" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A7000001;
+			productRefGroup = A7000004 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A4000001 /* PortWatch */,
+				A4000002 /* PortWatchTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A8000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000001 /* PortWatchApp.swift in Sources */,
+				A1000003 /* PortEntry.swift in Sources */,
+				A1000004 /* PortScanner.swift in Sources */,
+				A1000005 /* PortMonitor.swift in Sources */,
+				A1000006 /* ProjectDetector.swift in Sources */,
+				A1000007 /* NotificationManager.swift in Sources */,
+				A1000008 /* AppSettings.swift in Sources */,
+				A1000009 /* SettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A8000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000002 /* PortWatchTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A5000002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A4000001 /* PortWatch */;
+			targetProxy = A5000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		A9000002 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		A9000009 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_OPTIMIZATION_LEVEL = s;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
+		};
+		A9000004 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PortWatch/Info.plist;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.portwatch.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		A9000005 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PortWatch/Info.plist;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.portwatch.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		A9000007 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.portwatch.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PortWatch.app/Contents/MacOS/PortWatch";
+			};
+			name = Debug;
+		};
+		A9000008 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.portwatch.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PortWatch.app/Contents/MacOS/PortWatch";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A9000001 /* Build configuration list for PBXProject "PortWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A9000002 /* Debug */,
+				A9000009 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A9000003 /* Build configuration list for PBXNativeTarget "PortWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A9000004 /* Debug */,
+				A9000005 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A9000006 /* Build configuration list for PBXNativeTarget "PortWatchTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A9000007 /* Debug */,
+				A9000008 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A3000001 /* Project object */;
+}
