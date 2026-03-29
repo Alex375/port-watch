@@ -33,6 +33,9 @@ final class PortMonitor {
     /// Last kill result — shown to the user, never swallowed.
     var lastKillReport: KillReport? = nil
 
+    /// Auto-dismiss task for the kill report banner.
+    private var killReportDismissTask: Task<Void, Never>?
+
     /// Pending kill that requires confirmation (e.g. "Other" processes).
     var pendingKillConfirmation: PortEntry? = nil
 
@@ -149,11 +152,23 @@ final class PortMonitor {
         self.lastScanDate = now
     }
 
+    /// Set the kill report and schedule auto-dismiss after 15 seconds.
+    private func setKillReport(_ report: KillReport?) {
+        killReportDismissTask?.cancel()
+        lastKillReport = report
+        guard report != nil else { return }
+        killReportDismissTask = Task {
+            try? await Task.sleep(for: .seconds(15))
+            guard !Task.isCancelled else { return }
+            withAnimation { lastKillReport = nil }
+        }
+    }
+
     // MARK: - Kill
 
     /// Kill a single process and report the result.
     func killPort(_ entry: PortEntry) async {
-        lastKillReport = nil
+        setKillReport(nil)
         killingPIDs.insert(entry.pid)
 
         let result = await Task.detached(priority: .userInitiated) {
@@ -165,21 +180,21 @@ final class PortMonitor {
         if result.success {
             // Final verification: double-check the process is actually dead
             if PortScanner.isAlive(pid: entry.pid) {
-                lastKillReport = KillReport(
+                setKillReport(KillReport(
                     message: "Kill of \(result.processName) on :\(result.port) (PID \(result.pid)) reported success but process is still alive",
                     isError: true
-                )
+                ))
             } else {
-                lastKillReport = KillReport(
+                setKillReport(KillReport(
                     message: "Killed \(result.processName) on :\(result.port) (PID \(result.pid))",
                     isError: false
-                )
+                ))
             }
         } else {
-            lastKillReport = KillReport(
+            setKillReport(KillReport(
                 message: "Failed to kill \(result.processName) on :\(result.port) (PID \(result.pid)): \(result.error ?? "unknown error")",
                 isError: true
-            )
+            ))
         }
 
         await performScan()
@@ -187,7 +202,7 @@ final class PortMonitor {
 
     /// Kill all processes in a project group in parallel and report results.
     func killProject(_ group: ProjectGroup) async {
-        lastKillReport = nil
+        setKillReport(nil)
 
         // Deduplicate by PID (multiple ports can belong to same process)
         var uniqueEntries: [PortEntry] = []
@@ -238,16 +253,16 @@ final class PortMonitor {
 
         let total = successes + failures.count
         if failures.isEmpty && zombieWarnings.isEmpty {
-            lastKillReport = KillReport(
+            setKillReport(KillReport(
                 message: "\(group.projectName): \(successes) process\(successes == 1 ? "" : "es") killed",
                 isError: false
-            )
+            ))
         } else if !failures.isEmpty {
             let msg = "\(group.projectName): \(successes)/\(total) killed, \(failures.count) failed\n" + failures.joined(separator: "\n")
-            lastKillReport = KillReport(message: msg, isError: true)
+            setKillReport(KillReport(message: msg, isError: true))
         } else {
             let msg = "\(group.projectName): kills reported success but verification failed\n" + zombieWarnings.joined(separator: "\n")
-            lastKillReport = KillReport(message: msg, isError: true)
+            setKillReport(KillReport(message: msg, isError: true))
         }
 
         await performScan()
