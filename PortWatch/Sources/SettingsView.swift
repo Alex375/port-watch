@@ -154,6 +154,7 @@ struct SettingsView: View {
                 keywordRow(label: "Back", icon: "server.rack", color: Color(nsColor: .systemIndigo), keywords: $settings.backKeywords)
                 keywordRow(label: "DB", icon: "externaldrive.fill", color: Color(nsColor: .systemBrown), keywords: $settings.dbKeywords)
                 keywordRow(label: "DB processes", icon: "externaldrive.fill", color: Color(nsColor: .systemBrown), keywords: $settings.dbProcessNames)
+                keywordRow(label: "MCP", icon: "cpu", color: Color(nsColor: .systemPurple), keywords: $settings.mcpKeywords)
             }
 
             Divider()

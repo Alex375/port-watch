@@ -237,6 +237,7 @@ enum PortScanner: Sendable {
         let back: [String]
         let db: [String]
         let dbProc: [String]
+        let mcp: [String]
     }
 
     static func scanAllPorts(keywords: RoleKeywords? = nil) -> [PortEntry] {
@@ -373,7 +374,8 @@ enum PortScanner: Sendable {
                     role = PortEntry.detectRole(
                         folder: folder, process: name, cmd: cmd,
                         frontKeywords: kw.front, backKeywords: kw.back,
-                        dbKeywords: kw.db, dbProcessNames: kw.dbProc)
+                        dbKeywords: kw.db, dbProcessNames: kw.dbProc,
+                        mcpKeywords: kw.mcp)
                 } else {
                     role = (nil, nil)
                 }

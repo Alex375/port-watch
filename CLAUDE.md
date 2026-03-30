@@ -85,6 +85,7 @@ Default keywords:
 - **DB keywords:** db, database
 - **DB process names:** postgres, mysqld, mysql, mongod, mongos, redis-server, redis-sentinel
 - **Cache:** hardcoded for memcached, rabbitmq-server
+- **MCP:** mcp-server, mcp_server, fastmcp, modelcontextprotocol (matches process name and command line)
 
 ### Kill Sequence
 
@@ -141,6 +142,10 @@ La version est lue depuis `Info.plist` (`CFBundleShortVersionString`). Pour bump
 ### CI/CD (GitHub Actions)
 - **`.github/workflows/ci.yml`** — build debug + tests sur chaque push vers `dev` et chaque PR vers `dev`/`main`.
 - **`.github/workflows/release.yml`** — build Release + zip .app + création GitHub Release sur chaque push vers `main`. Skip si la version existe déjà.
+
+## Skills
+
+- **`/deploy`** (`.claude/skills/deploy/SKILL.md`) — Merge la branche feature courante dans `dev`, attend le CI, puis crée une PR de `dev` vers `main`.
 
 ## Out of Scope
 
