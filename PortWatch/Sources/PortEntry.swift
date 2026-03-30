@@ -94,7 +94,8 @@ struct PortEntry: Identifiable, Sendable {
     static func detectRole(
         folder: String, process: String, cmd: String,
         frontKeywords: [String], backKeywords: [String],
-        dbKeywords: [String], dbProcessNames: [String]
+        dbKeywords: [String], dbProcessNames: [String],
+        mcpKeywords: [String] = []
     ) -> (label: String?, icon: String?) {
         let f = folder.lowercased()
         let p = process.lowercased()
@@ -103,6 +104,10 @@ struct PortEntry: Identifiable, Sendable {
         // DB
         if dbProcessNames.contains(p) || dbKeywords.contains(where: { f.contains($0) }) {
             return ("DB", "externaldrive.fill")
+        }
+        // MCP
+        if mcpKeywords.contains(where: { p.contains($0) || c.contains($0) || f.contains($0) }) {
+            return ("MCP", "cpu")
         }
         // Front
         if frontKeywords.contains(where: { f.contains($0) || c.contains($0) }) {

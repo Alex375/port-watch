@@ -57,6 +57,9 @@ final class AppSettings {
     var dbProcessNames: [String] {
         didSet { UserDefaults.standard.set(dbProcessNames, forKey: "dbProcessNames") }
     }
+    var mcpKeywords: [String] {
+        didSet { UserDefaults.standard.set(mcpKeywords, forKey: "mcpKeywords") }
+    }
 
     private init() {
         let defaults = UserDefaults.standard
@@ -65,6 +68,7 @@ final class AppSettings {
         let defaultBack = ["back", "api", "server", "uvicorn", "gunicorn", "flask", "django", "express", "fastify"]
         let defaultDB = ["db", "database"]
         let defaultDBProc = ["postgres", "mysqld", "mysql", "mongod", "mongos", "redis-server", "redis-sentinel"]
+        let defaultMCP = ["mcp-server", "mcp_server", "fastmcp", "modelcontextprotocol"]
 
         // Register defaults
         defaults.register(defaults: [
@@ -79,6 +83,7 @@ final class AppSettings {
             "backKeywords": defaultBack,
             "dbKeywords": defaultDB,
             "dbProcessNames": defaultDBProc,
+            "mcpKeywords": defaultMCP,
         ])
 
         self.cpuThreshold = defaults.double(forKey: "cpuThreshold")
@@ -90,6 +95,7 @@ final class AppSettings {
         self.backKeywords = defaults.stringArray(forKey: "backKeywords") ?? defaultBack
         self.dbKeywords = defaults.stringArray(forKey: "dbKeywords") ?? defaultDB
         self.dbProcessNames = defaults.stringArray(forKey: "dbProcessNames") ?? defaultDBProc
+        self.mcpKeywords = defaults.stringArray(forKey: "mcpKeywords") ?? defaultMCP
     }
 
     func resetToDefaults() {
@@ -102,5 +108,6 @@ final class AppSettings {
         backKeywords = ["back", "api", "server", "uvicorn", "gunicorn", "flask", "django", "express", "fastify"]
         dbKeywords = ["db", "database"]
         dbProcessNames = ["postgres", "mysqld", "mysql", "mongod", "mongos", "redis-server", "redis-sentinel"]
+        mcpKeywords = ["mcp-server", "mcp_server", "fastmcp", "modelcontextprotocol"]
     }
 }
