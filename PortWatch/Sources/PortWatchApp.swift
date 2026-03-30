@@ -414,6 +414,7 @@ struct MenuContentView: View {
         case "Back":  return Color(nsColor: .systemIndigo)
         case "DB":    return Color(nsColor: .systemBrown)
         case "Cache": return Color(nsColor: .systemGray)
+        case "MCP":   return Color(nsColor: .systemPurple)
         default:      return Color.secondary
         }
     }

@@ -77,7 +77,8 @@ final class PortMonitor {
             front: settings.frontKeywords,
             back: settings.backKeywords,
             db: settings.dbKeywords,
-            dbProc: settings.dbProcessNames
+            dbProc: settings.dbProcessNames,
+            mcp: settings.mcpKeywords
         )
         let rawEntries = await Task.detached(priority: .utility) {
             PortScanner.scanAllPorts(keywords: kw)

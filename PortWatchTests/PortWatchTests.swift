@@ -307,6 +307,83 @@ final class PortEntryTests: XCTestCase {
         XCTAssertEqual(result.label, "DB")
     }
 
+    func testDetectRoleMCPByProcessName() {
+        let result = PortEntry.detectRole(
+            folder: "project", process: "mcp-server-github", cmd: "mcp-server-github",
+            frontKeywords: ["front"], backKeywords: ["back"],
+            dbKeywords: ["db"], dbProcessNames: ["postgres"],
+            mcpKeywords: ["mcp-server", "mcp_server", "fastmcp", "modelcontextprotocol"]
+        )
+        XCTAssertEqual(result.label, "MCP")
+        XCTAssertEqual(result.icon, "cpu")
+    }
+
+    func testDetectRoleMCPByCmd() {
+        let result = PortEntry.detectRole(
+            folder: "project", process: "node", cmd: "node /path/to/@modelcontextprotocol/server",
+            frontKeywords: ["front"], backKeywords: ["back"],
+            dbKeywords: ["db"], dbProcessNames: ["postgres"],
+            mcpKeywords: ["mcp-server", "mcp_server", "fastmcp", "modelcontextprotocol"]
+        )
+        XCTAssertEqual(result.label, "MCP")
+        XCTAssertEqual(result.icon, "cpu")
+    }
+
+    func testDetectRoleMCPFastmcp() {
+        let result = PortEntry.detectRole(
+            folder: "tools", process: "python", cmd: "python -m fastmcp run server.py",
+            frontKeywords: ["front"], backKeywords: ["back"],
+            dbKeywords: ["db"], dbProcessNames: ["postgres"],
+            mcpKeywords: ["mcp-server", "mcp_server", "fastmcp", "modelcontextprotocol"]
+        )
+        XCTAssertEqual(result.label, "MCP")
+    }
+
+    func testDetectRoleDBTakesPriorityOverMCP() {
+        // DB process names should still win over MCP keywords
+        let result = PortEntry.detectRole(
+            folder: "mcp-server", process: "postgres", cmd: "postgres",
+            frontKeywords: ["front"], backKeywords: ["back"],
+            dbKeywords: ["db"], dbProcessNames: ["postgres"],
+            mcpKeywords: ["mcp-server"]
+        )
+        XCTAssertEqual(result.label, "DB")
+    }
+
+    func testDetectRoleMCPByFolder() {
+        // MCP keyword in folder should match, even if cmd contains "server" (back keyword)
+        let result = PortEntry.detectRole(
+            folder: "mcp-server-github", process: "node", cmd: "node index.js",
+            frontKeywords: ["front"], backKeywords: ["server"],
+            dbKeywords: ["db"], dbProcessNames: ["postgres"],
+            mcpKeywords: ["mcp-server"]
+        )
+        XCTAssertEqual(result.label, "MCP")
+        XCTAssertEqual(result.icon, "cpu")
+    }
+
+    func testDetectRoleMCPFolderWinsOverBack() {
+        // Folder contains "mcp_server" and cmd contains "server" — MCP should win
+        let result = PortEntry.detectRole(
+            folder: "mcp_server_tools", process: "python", cmd: "python server.py",
+            frontKeywords: ["front"], backKeywords: ["server"],
+            dbKeywords: ["db"], dbProcessNames: ["postgres"],
+            mcpKeywords: ["mcp_server"]
+        )
+        XCTAssertEqual(result.label, "MCP")
+    }
+
+    func testDetectRoleMCPTakesPriorityOverBack() {
+        // MCP keyword in cmd should win over back keyword in cmd
+        let result = PortEntry.detectRole(
+            folder: "project", process: "node", cmd: "node mcp-server --api",
+            frontKeywords: ["front"], backKeywords: ["api"],
+            dbKeywords: ["db"], dbProcessNames: ["postgres"],
+            mcpKeywords: ["mcp-server"]
+        )
+        XCTAssertEqual(result.label, "MCP")
+    }
+
     // MARK: id and identity
 
     func testEntryId() {
@@ -537,12 +614,14 @@ final class PortScannerTests: XCTestCase {
             front: ["front", "web"],
             back: ["api", "server"],
             db: ["db"],
-            dbProc: ["postgres"]
+            dbProc: ["postgres"],
+            mcp: ["mcp-server"]
         )
         XCTAssertEqual(kw.front, ["front", "web"])
         XCTAssertEqual(kw.back, ["api", "server"])
         XCTAssertEqual(kw.db, ["db"])
         XCTAssertEqual(kw.dbProc, ["postgres"])
+        XCTAssertEqual(kw.mcp, ["mcp-server"])
     }
 
     func testProcessCwdForCurrentProcess() {
@@ -600,7 +679,8 @@ final class PortScannerTests: XCTestCase {
             front: ["front", "vite"],
             back: ["api", "server"],
             db: ["db"],
-            dbProc: ["postgres"]
+            dbProc: ["postgres"],
+            mcp: ["mcp-server", "fastmcp"]
         )
         let entries = PortScanner.scanAllPorts(keywords: kw)
         // Should not crash; entries may or may not have roles
