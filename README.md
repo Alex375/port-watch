@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="screenshots/menubar.png" alt="PortWatch menubar" />
+  <img src="screenshots/app_icon.png" width="128" alt="PortWatch icon" />
 </p>
 
 <h1 align="center">PortWatch</h1>
@@ -17,12 +17,6 @@
 
 ---
 
-<p align="center">
-  <img src="screenshots/main_screen.png" width="380" alt="Main view" />
-  &nbsp;&nbsp;
-  <img src="screenshots/settings.png" width="380" alt="Settings" />
-</p>
-
 ## Why PortWatch?
 
 Ever run `lsof -i -P | grep LISTEN` to figure out what's hogging port 3000? PortWatch does that for you — continuously, visually, and with one-click kill.
@@ -31,6 +25,12 @@ Ever run `lsof -i -P | grep LISTEN` to figure out what's hogging port 3000? Port
 - **Project-aware** — groups ports by Docker container, Git repo, or known service
 - **Role tagging** — instantly see which port is your frontend, backend, database, cache, or MCP server
 - **Non-intrusive** — lives in your menubar, no Dock icon
+
+<p align="center">
+  <img src="screenshots/menubar.png" alt="PortWatch in the macOS menubar" />
+  <br />
+  <em>PortWatch lives in your menubar — always visible, never in the way.</em>
+</p>
 
 ## Features
 
@@ -50,6 +50,12 @@ Ports are automatically grouped by project using this priority:
 | 2 | **Git repo** — walks up from process cwd to find `.git` | `port-watch` project |
 | 3 | **Known ports** — PostgreSQL, MySQL, Redis, MongoDB, Elasticsearch | PostgreSQL on :5432 |
 | 4 | **Other** — unidentified processes (shown last) | System services |
+
+<p align="center">
+  <img src="screenshots/main_screen.png" width="420" alt="Port list grouped by project" />
+  <br />
+  <em>Ports grouped by project with role tags, uptime, and one-click actions.</em>
+</p>
 
 ### Role Tagging
 
@@ -106,6 +112,12 @@ Inline settings panel with:
 - Detection keywords (editable tags)
 - Version info + update checker
 - Reset to defaults / Uninstall
+
+<p align="center">
+  <img src="screenshots/settings.png" width="420" alt="Settings panel" />
+  <br />
+  <em>Configurable thresholds, notification preferences, and editable detection keywords.</em>
+</p>
 
 ### Auto-Update
 
