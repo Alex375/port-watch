@@ -52,7 +52,9 @@ Automates the full deployment pipeline: feature branch -> dev -> PR to main.
      <checklist>
      ```
 
-8. **Report the PR URL** to the user.
+8. **Check if README needs updating.** If the commits being deployed include a user-visible feature (new role, new setting, new detection method, UI change), verify that `README.md` has been updated accordingly. If not, update the relevant sections (Features, Role Tagging table, etc.) and commit before merging to `dev`.
+
+9. **Report the PR URL** to the user.
 
 ## Important notes
 

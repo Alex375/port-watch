@@ -109,6 +109,17 @@ Optional (off by default), via `UNUserNotificationCenter`:
 - New port detected
 - Port conflict (multiple PIDs on same port)
 
+## README Maintenance
+
+The `README.md` does **not** need to be updated on every push to `main`. Badges (version, CI status) update automatically via shields.io.
+
+**Update the README when:**
+- A new user-visible feature is added (new role, new setting, new detection method, etc.)
+- Prerequisites change (macOS version, Swift version, etc.)
+- The contribution workflow changes
+
+When a feature is added, update the relevant section in the README (Features, Role Tagging table, etc.) as part of the same feature branch, before merging to `dev`.
+
 ## Key Design Rules
 
 - Processes are **grouped by project** in the menu, not a flat list. "Other" always sorted last.
