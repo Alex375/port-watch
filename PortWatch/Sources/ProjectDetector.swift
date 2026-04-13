@@ -81,42 +81,98 @@ enum ProjectDetector: Sendable {
 
     // MARK: - Public API
 
-    static func detectProject(cwd: String, port: UInt16) -> String {
+    static func detectProject(cwd: String, port: UInt16) -> (name: String, worktreeName: String?) {
         // 1. Docker first
         if let dockerName = dockerPortMap[port] {
-            return dockerName
+            return (dockerName, nil)
         }
 
         // 2. Git root = project name (primary strategy)
         if !cwd.isEmpty {
-            if let name = findGitRootName(from: cwd) {
-                return name
+            if let result = findGitRootName(from: cwd) {
+                return result
             }
         }
 
         // 3. Known port fallback
         if let known = knownPorts[port] {
-            return known
+            return (known, nil)
         }
 
-        return "Other"
+        return ("Other", nil)
     }
 
     // MARK: - Git root detection
 
-    /// Walk up from path to find the nearest .git directory. Returns the folder name containing .git.
-    private static func findGitRootName(from path: String) -> String? {
+    /// Walk up from path to find the nearest .git entry. If .git is a directory, returns the folder name.
+    /// If .git is a file (worktree), reads the gitdir path and resolves the main repository name.
+    private static func findGitRootName(from path: String) -> (name: String, worktreeName: String?)? {
         var current = URL(fileURLWithPath: path)
         let root = URL(fileURLWithPath: "/")
+        let fm = FileManager.default
 
         while current.path != root.path {
             let gitURL = current.appendingPathComponent(".git")
-            if FileManager.default.fileExists(atPath: gitURL.path) {
-                return current.lastPathComponent
+            var isDirectory: ObjCBool = false
+            if fm.fileExists(atPath: gitURL.path, isDirectory: &isDirectory) {
+                if isDirectory.boolValue {
+                    // Normal git repo
+                    return (current.lastPathComponent, nil)
+                } else {
+                    // Git worktree: .git is a file containing "gitdir: <path>"
+                    let wtName = current.lastPathComponent
+                    if let mainRepoName = resolveWorktreeMainRepo(gitFile: gitURL) {
+                        return (mainRepoName, wtName)
+                    }
+                    // Fallback: use current folder name if we can't resolve
+                    return (current.lastPathComponent, wtName)
+                }
             }
             let parent = current.deletingLastPathComponent()
             if parent.path == current.path { break }
             current = parent
+        }
+
+        return nil
+    }
+
+    /// Read a .git file (worktree) and resolve the main repository name.
+    /// The file contains something like: `gitdir: /path/to/main-repo/.git/worktrees/worktree-name`
+    /// We navigate up from that path to find the main repo's .git directory.
+    private static func resolveWorktreeMainRepo(gitFile: URL) -> String? {
+        guard let contents = try? String(contentsOf: gitFile, encoding: .utf8) else { return nil }
+
+        let trimmed = contents.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("gitdir:") else { return nil }
+
+        let gitdirPath = trimmed.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces)
+        guard !gitdirPath.isEmpty else { return nil }
+
+        // Resolve the path (it may be relative to the worktree directory)
+        let resolvedURL: URL
+        if gitdirPath.hasPrefix("/") {
+            resolvedURL = URL(fileURLWithPath: gitdirPath)
+        } else {
+            resolvedURL = gitFile.deletingLastPathComponent()
+                .appendingPathComponent(gitdirPath)
+                .standardized
+        }
+
+        // Walk up from the gitdir path looking for a directory that IS a .git directory.
+        // Typical structure: /path/to/main-repo/.git/worktrees/worktree-name
+        // We need to find /path/to/main-repo/.git, then return "main-repo".
+        var candidate = resolvedURL
+        let rootURL = URL(fileURLWithPath: "/")
+        while candidate.path != rootURL.path {
+            if candidate.lastPathComponent == ".git" {
+                var isDir: ObjCBool = false
+                if FileManager.default.fileExists(atPath: candidate.path, isDirectory: &isDir), isDir.boolValue {
+                    return candidate.deletingLastPathComponent().lastPathComponent
+                }
+            }
+            let parent = candidate.deletingLastPathComponent()
+            if parent.path == candidate.path { break }
+            candidate = parent
         }
 
         return nil

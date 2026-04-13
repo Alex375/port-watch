@@ -250,7 +250,7 @@ enum PortScanner: Sendable {
         var pathCache: [Int32: String] = [:]
         var cmdCache: [Int32: String] = [:]
         var cwdCache: [Int32: String] = [:]
-        var projectCache: [Int32: String] = [:]
+        var projectCache: [Int32: (name: String, worktreeName: String?)] = [:]
         var bsdCache: [Int32: proc_bsdinfo?] = [:]
         var taskCache: [Int32: proc_taskinfo?] = [:]
 
@@ -306,11 +306,11 @@ enum PortScanner: Sendable {
                 return cwd
             }
 
-            func getProject(cwd: String, port: UInt16) -> String {
+            func getProject(cwd: String, port: UInt16) -> (name: String, worktreeName: String?) {
                 if let cached = projectCache[pid] { return cached }
-                let name = ProjectDetector.detectProject(cwd: cwd, port: port)
-                projectCache[pid] = name
-                return name
+                let result = ProjectDetector.detectProject(cwd: cwd, port: port)
+                projectCache[pid] = result
+                return result
             }
 
             func getTask() -> proc_taskinfo? {
@@ -392,7 +392,8 @@ enum PortScanner: Sendable {
                     processStartTime: startTime,
                     residentMemoryBytes: residentMem,
                     totalCPUTimeNs: cpuTimeNs,
-                    projectName: project,
+                    projectName: project.name,
+                    worktreeName: project.worktreeName,
                     roleLabel: role.label,
                     roleIcon: role.icon
                 )

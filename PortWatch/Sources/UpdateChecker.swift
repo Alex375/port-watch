@@ -21,8 +21,29 @@ final class UpdateChecker {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
     }
 
+    private let checkInterval: TimeInterval = 7200 // 2 hours
+    private var checkTask: Task<Void, Never>?
+
     private init() {
         apiURL = URL(string: "https://api.github.com/repos/Alex375/port-watch/releases/latest")!
+        startPeriodicChecks()
+    }
+
+    /// Start a background loop that checks for updates every 2 hours.
+    func startPeriodicChecks() {
+        guard checkTask == nil else { return }
+        checkTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.checkForUpdate()
+                try? await Task.sleep(for: .seconds(self?.checkInterval ?? 7200))
+            }
+        }
+    }
+
+    /// Cancel the periodic update check loop.
+    func stopPeriodicChecks() {
+        checkTask?.cancel()
+        checkTask = nil
     }
 
     /// Check GitHub for a newer release. Called at launch + manually.
