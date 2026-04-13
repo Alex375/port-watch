@@ -74,6 +74,7 @@ final class PortEntryTests: XCTestCase {
         residentMemoryBytes: UInt64 = 0,
         totalCPUTimeNs: UInt64 = 0,
         projectName: String = "TestProject",
+        worktreeName: String? = nil,
         roleLabel: String? = nil,
         roleIcon: String? = nil
     ) -> PortEntry {
@@ -90,6 +91,7 @@ final class PortEntryTests: XCTestCase {
             residentMemoryBytes: residentMemoryBytes,
             totalCPUTimeNs: totalCPUTimeNs,
             projectName: projectName,
+            worktreeName: worktreeName,
             roleLabel: roleLabel,
             roleIcon: roleIcon
         )
@@ -384,6 +386,18 @@ final class PortEntryTests: XCTestCase {
         XCTAssertEqual(result.label, "MCP")
     }
 
+    // MARK: worktreeName
+
+    func testWorktreeNameNilByDefault() {
+        let entry = makeEntry()
+        XCTAssertNil(entry.worktreeName)
+    }
+
+    func testWorktreeNameStored() {
+        let entry = makeEntry(worktreeName: "agent-abc123")
+        XCTAssertEqual(entry.worktreeName, "agent-abc123")
+    }
+
     // MARK: id and identity
 
     func testEntryId() {
@@ -413,6 +427,7 @@ final class PortEntryDisplayTests: XCTestCase {
             residentMemoryBytes: 0,
             totalCPUTimeNs: 0,
             projectName: "Test",
+            worktreeName: nil,
             roleLabel: nil,
             roleIcon: nil
         )
@@ -467,6 +482,7 @@ final class ProjectGroupTests: XCTestCase {
             residentMemoryBytes: 0,
             totalCPUTimeNs: 0,
             projectName: "MyApp",
+            worktreeName: nil,
             roleLabel: nil,
             roleIcon: nil
         )
@@ -484,14 +500,14 @@ final class ProjectGroupTests: XCTestCase {
             processName: "node", processPath: "", commandLine: "", cwd: "",
             tcpState: .listen, processStartTime: Date(),
             residentMemoryBytes: 0, totalCPUTimeNs: 0,
-            projectName: "MyApp", roleLabel: nil, roleIcon: nil
+            projectName: "MyApp", worktreeName: nil, roleLabel: nil, roleIcon: nil
         )
         let entry2 = PortEntry(
             id: "3001-2-0", port: 3001, pid: 2,
             processName: "python", processPath: "", commandLine: "", cwd: "",
             tcpState: .listen, processStartTime: Date(),
             residentMemoryBytes: 0, totalCPUTimeNs: 0,
-            projectName: "MyApp", roleLabel: nil, roleIcon: nil
+            projectName: "MyApp", worktreeName: nil, roleLabel: nil, roleIcon: nil
         )
         let displays = [
             PortEntryDisplay(entry: entry1, cpuPercent: nil),
@@ -721,47 +737,49 @@ final class ProjectDetectorTests: XCTestCase {
 
     func testKnownPortPostgreSQL() {
         // Docker detection runs first and may claim port 5432 if Docker is running.
-        // Use a cwd that doesn't match any git root, so we test the known-port fallback
-        // only when Docker is not mapping this port.
-        let name = ProjectDetector.detectProject(cwd: "", port: 5432)
-        // Accept either the known-port name or a Docker container name
-        let isExpected = name == "PostgreSQL" || name.hasPrefix("Docker:")
-        XCTAssertTrue(isExpected, "Port 5432 should be 'PostgreSQL' or Docker, got: \(name)")
+        let result = ProjectDetector.detectProject(cwd: "", port: 5432)
+        let isExpected = result.name == "PostgreSQL" || result.name.hasPrefix("Docker:")
+        XCTAssertTrue(isExpected, "Port 5432 should be 'PostgreSQL' or Docker, got: \(result.name)")
+        XCTAssertNil(result.worktreeName)
     }
 
     func testKnownPortMySQL() {
-        let name = ProjectDetector.detectProject(cwd: "", port: 3306)
-        XCTAssertEqual(name, "MySQL")
+        let result = ProjectDetector.detectProject(cwd: "", port: 3306)
+        XCTAssertEqual(result.name, "MySQL")
+        XCTAssertNil(result.worktreeName)
     }
 
     func testKnownPortRedis() {
-        let name = ProjectDetector.detectProject(cwd: "", port: 6379)
-        XCTAssertEqual(name, "Redis")
+        let result = ProjectDetector.detectProject(cwd: "", port: 6379)
+        XCTAssertEqual(result.name, "Redis")
+        XCTAssertNil(result.worktreeName)
     }
 
     func testKnownPortMongoDB() {
-        let name = ProjectDetector.detectProject(cwd: "", port: 27017)
-        XCTAssertEqual(name, "MongoDB")
+        let result = ProjectDetector.detectProject(cwd: "", port: 27017)
+        XCTAssertEqual(result.name, "MongoDB")
+        XCTAssertNil(result.worktreeName)
     }
 
     func testKnownPortElasticsearch() {
-        let name = ProjectDetector.detectProject(cwd: "", port: 9200)
-        XCTAssertEqual(name, "Elasticsearch")
+        let result = ProjectDetector.detectProject(cwd: "", port: 9200)
+        XCTAssertEqual(result.name, "Elasticsearch")
+        XCTAssertNil(result.worktreeName)
     }
 
     func testUnknownPortAndEmptyCwd() {
-        let name = ProjectDetector.detectProject(cwd: "", port: 12345)
-        XCTAssertEqual(name, "Other")
+        let result = ProjectDetector.detectProject(cwd: "", port: 12345)
+        XCTAssertEqual(result.name, "Other")
+        XCTAssertNil(result.worktreeName)
     }
 
     func testUnknownPortWithNonGitCwd() {
-        // Use a directory that exists but has no .git
-        let name = ProjectDetector.detectProject(cwd: "/tmp", port: 55555)
-        XCTAssertEqual(name, "Other")
+        let result = ProjectDetector.detectProject(cwd: "/tmp", port: 55555)
+        XCTAssertEqual(result.name, "Other")
+        XCTAssertNil(result.worktreeName)
     }
 
     func testDetectProjectWithGitDirectory() throws {
-        // Create a temp directory with a .git folder
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("PortWatchTest-\(UUID().uuidString)")
         let gitDir = tempDir.appendingPathComponent(".git")
@@ -772,13 +790,12 @@ final class ProjectDetectorTests: XCTestCase {
             try? FileManager.default.removeItem(at: tempDir)
         }
 
-        let name = ProjectDetector.detectProject(cwd: tempDir.path, port: 9999)
-        // Should return the folder name containing .git
-        XCTAssertEqual(name, tempDir.lastPathComponent)
+        let result = ProjectDetector.detectProject(cwd: tempDir.path, port: 9999)
+        XCTAssertEqual(result.name, tempDir.lastPathComponent)
+        XCTAssertNil(result.worktreeName)
     }
 
     func testDetectProjectWithGitInParentDirectory() throws {
-        // Create a temp directory structure: root/.git and root/subdir
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("PortWatchTest-\(UUID().uuidString)")
         let gitDir = tempDir.appendingPathComponent(".git")
@@ -791,14 +808,12 @@ final class ProjectDetectorTests: XCTestCase {
             try? FileManager.default.removeItem(at: tempDir)
         }
 
-        let name = ProjectDetector.detectProject(cwd: subDir.path, port: 9999)
-        // Should walk up and find the root directory name
-        XCTAssertEqual(name, tempDir.lastPathComponent)
+        let result = ProjectDetector.detectProject(cwd: subDir.path, port: 9999)
+        XCTAssertEqual(result.name, tempDir.lastPathComponent)
+        XCTAssertNil(result.worktreeName)
     }
 
     func testDetectProjectGitTakesPriorityOverKnownPort() throws {
-        // Even for a known port, if there's a git root, it should use the git project name.
-        // Use port 9200 (Elasticsearch) instead of 5432 to avoid Docker interference.
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("PortWatchTest-\(UUID().uuidString)")
         let gitDir = tempDir.appendingPathComponent(".git")
@@ -809,13 +824,195 @@ final class ProjectDetectorTests: XCTestCase {
             try? FileManager.default.removeItem(at: tempDir)
         }
 
-        let name = ProjectDetector.detectProject(cwd: tempDir.path, port: 9200)
-        // Git root should take priority over known port.
-        // Docker could still claim this port, but that's very unlikely for 9200.
-        let isGitName = name == tempDir.lastPathComponent
-        let isDocker = name.hasPrefix("Docker:")
+        let result = ProjectDetector.detectProject(cwd: tempDir.path, port: 9200)
+        let isGitName = result.name == tempDir.lastPathComponent
+        let isDocker = result.name.hasPrefix("Docker:")
         XCTAssertTrue(isGitName || isDocker,
-                       "Should detect git project or Docker, got: \(name)")
+                       "Should detect git project or Docker, got: \(result.name)")
+        XCTAssertNil(result.worktreeName)
+    }
+
+    // MARK: - Worktree detection
+
+    func testDetectProjectWithGitWorktree() throws {
+        let mainRepo = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PortWatchTest-main-\(UUID().uuidString)")
+        let mainGitDir = mainRepo.appendingPathComponent(".git")
+        let worktreesDir = mainGitDir.appendingPathComponent("worktrees").appendingPathComponent("my-worktree")
+
+        try FileManager.default.createDirectory(at: worktreesDir, withIntermediateDirectories: true)
+
+        let worktreeDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PortWatchTest-wt-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: worktreeDir, withIntermediateDirectories: true)
+
+        let gitFile = worktreeDir.appendingPathComponent(".git")
+        try "gitdir: \(worktreesDir.path)".write(to: gitFile, atomically: true, encoding: .utf8)
+
+        defer {
+            try? FileManager.default.removeItem(at: mainRepo)
+            try? FileManager.default.removeItem(at: worktreeDir)
+        }
+
+        let result = ProjectDetector.detectProject(cwd: worktreeDir.path, port: 9999)
+        XCTAssertEqual(result.name, mainRepo.lastPathComponent)
+        // worktreeName should be the worktree folder name
+        XCTAssertEqual(result.worktreeName, worktreeDir.lastPathComponent)
+    }
+
+    func testDetectProjectWithGitWorktreeFromSubdirectory() throws {
+        let mainRepo = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PortWatchTest-main-\(UUID().uuidString)")
+        let mainGitDir = mainRepo.appendingPathComponent(".git")
+        let worktreesDir = mainGitDir.appendingPathComponent("worktrees").appendingPathComponent("wt")
+
+        try FileManager.default.createDirectory(at: worktreesDir, withIntermediateDirectories: true)
+
+        let worktreeDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PortWatchTest-wt-\(UUID().uuidString)")
+        let subDir = worktreeDir.appendingPathComponent("src")
+        try FileManager.default.createDirectory(at: subDir, withIntermediateDirectories: true)
+
+        let gitFile = worktreeDir.appendingPathComponent(".git")
+        try "gitdir: \(worktreesDir.path)".write(to: gitFile, atomically: true, encoding: .utf8)
+
+        defer {
+            try? FileManager.default.removeItem(at: mainRepo)
+            try? FileManager.default.removeItem(at: worktreeDir)
+        }
+
+        // Process cwd is in a subdirectory of the worktree
+        let result = ProjectDetector.detectProject(cwd: subDir.path, port: 9999)
+        XCTAssertEqual(result.name, mainRepo.lastPathComponent)
+        // worktreeName is the folder containing .git file, not the subdirectory
+        XCTAssertEqual(result.worktreeName, worktreeDir.lastPathComponent)
+    }
+
+    func testDetectProjectWithGitWorktreeRelativePath() throws {
+        let mainRepo = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PortWatchTest-main-\(UUID().uuidString)")
+        let mainGitDir = mainRepo.appendingPathComponent(".git")
+        let worktreesDir = mainGitDir.appendingPathComponent("worktrees").appendingPathComponent("wt")
+
+        try FileManager.default.createDirectory(at: worktreesDir, withIntermediateDirectories: true)
+
+        // Create worktree inside main repo's .claude/worktrees/
+        let worktreeDir = mainRepo.appendingPathComponent(".claude").appendingPathComponent("worktrees").appendingPathComponent("wt")
+        try FileManager.default.createDirectory(at: worktreeDir, withIntermediateDirectories: true)
+
+        let gitFile = worktreeDir.appendingPathComponent(".git")
+        try "gitdir: ../../../.git/worktrees/wt".write(to: gitFile, atomically: true, encoding: .utf8)
+
+        defer {
+            try? FileManager.default.removeItem(at: mainRepo)
+        }
+
+        let result = ProjectDetector.detectProject(cwd: worktreeDir.path, port: 9999)
+        XCTAssertEqual(result.name, mainRepo.lastPathComponent)
+        XCTAssertEqual(result.worktreeName, "wt")
+    }
+
+    func testDetectProjectWorktreeGroupsUnderMainProject() throws {
+        // Worktree and main repo should return the same project name
+        let mainRepo = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PortWatchTest-main-\(UUID().uuidString)")
+        let mainGitDir = mainRepo.appendingPathComponent(".git")
+        let worktreesDir = mainGitDir.appendingPathComponent("worktrees").appendingPathComponent("wt")
+
+        try FileManager.default.createDirectory(at: worktreesDir, withIntermediateDirectories: true)
+
+        let worktreeDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PortWatchTest-wt-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: worktreeDir, withIntermediateDirectories: true)
+
+        let gitFile = worktreeDir.appendingPathComponent(".git")
+        try "gitdir: \(worktreesDir.path)".write(to: gitFile, atomically: true, encoding: .utf8)
+
+        defer {
+            try? FileManager.default.removeItem(at: mainRepo)
+            try? FileManager.default.removeItem(at: worktreeDir)
+        }
+
+        let mainResult = ProjectDetector.detectProject(cwd: mainRepo.path, port: 3000)
+        let wtResult = ProjectDetector.detectProject(cwd: worktreeDir.path, port: 3001)
+
+        // Both should resolve to the same project name
+        XCTAssertEqual(mainResult.name, wtResult.name)
+        // Main repo is not a worktree
+        XCTAssertNil(mainResult.worktreeName)
+        // Worktree has a name
+        XCTAssertNotNil(wtResult.worktreeName)
+    }
+
+    func testDetectProjectWorktreeInvalidGitFileContent() throws {
+        // .git file exists but has garbage content
+        let worktreeDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PortWatchTest-wt-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: worktreeDir, withIntermediateDirectories: true)
+
+        let gitFile = worktreeDir.appendingPathComponent(".git")
+        try "this is not a valid gitdir reference".write(to: gitFile, atomically: true, encoding: .utf8)
+
+        defer {
+            try? FileManager.default.removeItem(at: worktreeDir)
+        }
+
+        let result = ProjectDetector.detectProject(cwd: worktreeDir.path, port: 9999)
+        // Should fallback to folder name since resolution fails
+        XCTAssertEqual(result.name, worktreeDir.lastPathComponent)
+        // Still recognized as a worktree (it's a .git file, not directory)
+        XCTAssertNotNil(result.worktreeName)
+    }
+
+    func testDetectProjectWorktreeEmptyGitFile() throws {
+        let worktreeDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PortWatchTest-wt-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: worktreeDir, withIntermediateDirectories: true)
+
+        let gitFile = worktreeDir.appendingPathComponent(".git")
+        try "".write(to: gitFile, atomically: true, encoding: .utf8)
+
+        defer {
+            try? FileManager.default.removeItem(at: worktreeDir)
+        }
+
+        let result = ProjectDetector.detectProject(cwd: worktreeDir.path, port: 9999)
+        XCTAssertEqual(result.name, worktreeDir.lastPathComponent)
+        XCTAssertNotNil(result.worktreeName)
+    }
+
+    func testDetectProjectWorktreeGitdirPointsToNonexistentPath() throws {
+        let worktreeDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PortWatchTest-wt-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: worktreeDir, withIntermediateDirectories: true)
+
+        let gitFile = worktreeDir.appendingPathComponent(".git")
+        try "gitdir: /nonexistent/path/.git/worktrees/foo".write(to: gitFile, atomically: true, encoding: .utf8)
+
+        defer {
+            try? FileManager.default.removeItem(at: worktreeDir)
+        }
+
+        let result = ProjectDetector.detectProject(cwd: worktreeDir.path, port: 9999)
+        // Resolution fails because the .git dir doesn't exist, falls back to folder name
+        XCTAssertEqual(result.name, worktreeDir.lastPathComponent)
+        XCTAssertNotNil(result.worktreeName)
+    }
+
+    func testDetectProjectNormalRepoHasNilWorktreeName() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PortWatchTest-\(UUID().uuidString)")
+        let gitDir = tempDir.appendingPathComponent(".git")
+
+        try FileManager.default.createDirectory(at: gitDir, withIntermediateDirectories: true)
+
+        defer {
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+
+        let result = ProjectDetector.detectProject(cwd: tempDir.path, port: 9999)
+        XCTAssertEqual(result.name, tempDir.lastPathComponent)
+        XCTAssertNil(result.worktreeName)
     }
 }
 

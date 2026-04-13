@@ -33,7 +33,7 @@ struct MenuContentView: View {
     @State private var showSettings = false
     @State private var isRefreshing = false
     @State private var updater = UpdateChecker.shared
-    @State private var hasCheckedUpdate = false
+    @State private var isOtherCollapsed = true
 
     var body: some View {
         Group {
@@ -153,13 +153,13 @@ struct MenuContentView: View {
                 .padding(.vertical, 30)
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 16) {
                         ForEach(monitor.groupedEntries, id: \.projectName) { group in
                             projectSection(group)
                         }
                     }
                     .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
+                    .padding(.vertical, 12)
                 }
                 .scrollBounceBehavior(.basedOnSize)
                 .frame(maxHeight: 600)
@@ -230,23 +230,25 @@ struct MenuContentView: View {
         }
         .animation(.easeInOut(duration: 0.25), value: monitor.lastKillReport?.message)
         .animation(.easeInOut(duration: 0.25), value: monitor.pendingKillConfirmation?.pid)
-        .task {
-            if !hasCheckedUpdate {
-                hasCheckedUpdate = true
-                await updater.checkForUpdate()
-            }
-        }
     }
 
     // MARK: - Project section
 
     @ViewBuilder
     private func projectSection(_ group: ProjectGroup) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let isOther = group.projectName == "Other"
+
+        VStack(alignment: .leading, spacing: 8) {
             // Project header
             HStack(spacing: 8) {
+                if isOther {
+                    Image(systemName: isOtherCollapsed ? "chevron.right" : "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 10)
+                }
                 Circle()
-                    .fill(group.projectName == "Other" ? Color.gray : Color.blue)
+                    .fill(isOther ? Color.gray : Color.blue)
                     .frame(width: 10, height: 10)
                 Text(group.projectName)
                     .font(.headline)
@@ -258,7 +260,7 @@ struct MenuContentView: View {
                     .padding(.vertical, 3)
                     .background(Color.secondary.opacity(0.12), in: Capsule())
                 // Kill all button for project
-                if group.projectName != "Other" {
+                if !isOther {
                     let isKilling = group.entries.contains { monitor.killingPIDs.contains($0.entry.pid) }
                     if isKilling {
                         ProgressView()
@@ -271,11 +273,21 @@ struct MenuContentView: View {
                     }
                 }
             }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if isOther {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isOtherCollapsed.toggle()
+                    }
+                }
+            }
 
             // Port entries
-            ForEach(group.entries) { display in
-                portRow(display)
-                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            if !isOther || !isOtherCollapsed {
+                ForEach(group.entries) { display in
+                    portRow(display)
+                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                }
             }
         }
     }
@@ -291,21 +303,49 @@ struct MenuContentView: View {
                 .frame(width: 6, height: 6)
                 .padding(.top, 5)
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: 4) {
+                // Line 1: port tag + role tag + worktree tag + uptime + actions
+                HStack(spacing: 5) {
                     Text(":" + String(display.entry.port))
-                        .font(.system(.callout, design: .monospaced))
-                        .fontWeight(.semibold)
-                    Text(display.entry.processName)
-                        .font(.callout)
-                        .foregroundStyle(.primary)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 4))
+                    if let icon = display.entry.roleIcon, let label = display.entry.roleLabel {
+                        HStack(spacing: 3) {
+                            Image(systemName: icon)
+                                .font(.system(size: 8))
+                            Text(label)
+                                .font(.system(size: 9, weight: .medium))
+                        }
+                        .foregroundStyle(roleColor(label))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(roleColor(label).opacity(0.12), in: Capsule())
+                    }
+                    if let wtName = display.entry.worktreeName {
+                        HStack(spacing: 3) {
+                            Image(systemName: "arrow.triangle.branch")
+                                .font(.system(size: 8))
+                            Text(wtName)
+                                .font(.system(size: 9, weight: .medium))
+                                .lineLimit(1)
+                        }
+                        .foregroundStyle(.orange.opacity(0.8))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.orange.opacity(0.10), in: Capsule())
+                        .help("Git worktree: \(wtName)")
+                    }
                     Spacer()
-                    Text("PID " + String(display.entry.pid))
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                    Text(display.entry.uptimeFormatted)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                    HStack(spacing: 3) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 8))
+                        Text(display.entry.uptimeFormatted)
+                            .font(.system(size: 9, weight: .medium))
+                    }
+                    .foregroundStyle(.tertiary)
                     // Open in browser
                     HoverButton(icon: "globe", color: .blue, help: "Open in browser") {
                         if let url = URL(string: "http://localhost:\(display.entry.port)") {
@@ -327,43 +367,45 @@ struct MenuContentView: View {
                         }
                     }
                 }
-                if !display.commandSummary.isEmpty {
-                    Text(display.commandSummary)
+                // Line 2: process name + PID
+                HStack(spacing: 6) {
+                    Text(display.entry.processName)
+                        .font(.callout)
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Text("PID " + String(display.entry.pid))
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                        .foregroundStyle(.tertiary)
                 }
-                HStack(spacing: 4) {
-                    if let icon = display.entry.roleIcon, let label = display.entry.roleLabel {
-                        HStack(spacing: 3) {
-                            Image(systemName: icon)
-                                .font(.system(size: 8))
-                            Text(label)
-                                .font(.system(size: 9, weight: .medium))
+                // Line 3: command + cwd (complementary info)
+                if !display.commandSummary.isEmpty || !display.entry.cwd.isEmpty {
+                    HStack(spacing: 4) {
+                        if !display.commandSummary.isEmpty {
+                            Text(display.commandSummary)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
                         }
-                        .foregroundStyle(roleColor(label))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(roleColor(label).opacity(0.12), in: Capsule())
-                    }
-                    if !display.entry.cwd.isEmpty {
-                        Image(systemName: "folder")
-                            .font(.system(size: 8))
-                            .foregroundStyle(.tertiary)
-                        Text(display.entry.shortCwd)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-                            .truncationMode(.head)
+                        if !display.entry.cwd.isEmpty {
+                            Spacer()
+                            Image(systemName: "folder")
+                                .font(.system(size: 8))
+                                .foregroundStyle(.tertiary)
+                            Text(display.entry.shortCwd)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                                .truncationMode(.head)
+                        }
                     }
                 }
                 warningBadges(display)
             }
         }
-        .padding(.vertical, 3)
-        .padding(.horizontal, 8)
-        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 6))
+        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - Warning badges

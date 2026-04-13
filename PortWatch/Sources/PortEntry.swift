@@ -49,6 +49,7 @@ struct PortEntry: Identifiable, Sendable {
     let residentMemoryBytes: UInt64
     let totalCPUTimeNs: UInt64
     let projectName: String
+    let worktreeName: String?
 
     var uptime: TimeInterval {
         Date().timeIntervalSince(processStartTime)
