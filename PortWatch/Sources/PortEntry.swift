@@ -30,8 +30,11 @@ enum TCPState: Int32, Sendable {
         }
     }
 
-    var isZombie: Bool {
-        self == .closeWait || self == .timeWait
+    /// True if the state is a candidate for zombie flagging.
+    /// `TIME_WAIT` is a normal TCP state (2*MSL cleanup after clean close) and is never a zombie.
+    /// `CLOSE_WAIT` only indicates a real zombie when it persists across several scans (see `PortEntryDisplay.isZombie`).
+    var isZombieCandidate: Bool {
+        self == .closeWait
     }
 }
 
@@ -137,6 +140,10 @@ struct CPUSample: Sendable {
 struct PortEntryDisplay: Identifiable, Sendable {
     let entry: PortEntry
     let cpuPercent: Double?
+
+    /// True when the socket has been stuck in `CLOSE_WAIT` long enough to be considered a real leak
+    /// (the app forgot to call `close()`). Transient CLOSE_WAIT is normal during connection teardown.
+    let isZombie: Bool
 
     var id: String { entry.id }
 

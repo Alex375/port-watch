@@ -17,6 +17,7 @@
 		A1000008 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000B /* AppSettings.swift */; };
 		A1000009 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000C /* SettingsView.swift */; };
 		A100000B /* UpdateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000E /* UpdateChecker.swift */; };
+		A100000C /* PortRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000F /* PortRowView.swift */; };
 		A100000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A200000D /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -45,6 +46,7 @@
 		A200000C /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		A200000D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A200000E /* UpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateChecker.swift; sourceTree = "<group>"; };
+		A200000F /* PortRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortRowView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -113,6 +115,7 @@
 				A200000B /* AppSettings.swift */,
 				A200000C /* SettingsView.swift */,
 				A200000E /* UpdateChecker.swift */,
+				A200000F /* PortRowView.swift */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -205,6 +208,7 @@
 				A1000008 /* AppSettings.swift in Sources */,
 				A1000009 /* SettingsView.swift in Sources */,
 				A100000B /* UpdateChecker.swift in Sources */,
+				A100000C /* PortRowView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
