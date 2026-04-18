@@ -1133,3 +1133,97 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(stored, 75.0)
     }
 }
+
+// MARK: - PortScanner.filterServerSockets Tests
+
+final class FilterServerSocketsTests: XCTestCase {
+
+    /// Build a minimal PortEntry for a given pid/port/state.
+    private func make(pid: Int32 = 1234, port: UInt16, state: TCPState, processName: String = "proc") -> PortEntry {
+        PortEntry(
+            id: "\(port)-\(pid)-\(UUID().uuidString.prefix(4))",
+            port: port, pid: pid,
+            processName: processName, processPath: "", commandLine: "", cwd: "",
+            tcpState: state,
+            processStartTime: Date(),
+            residentMemoryBytes: 0, totalCPUTimeNs: 0,
+            projectName: "Other", worktreeName: nil,
+            roleLabel: nil, roleIcon: nil
+        )
+    }
+
+    func testPureClientProcessIsFilteredOut() {
+        // Claude-like scenario: process has only CLOSE_WAIT on ephemeral ports (no LISTEN).
+        // These are outbound HTTPS connections in teardown, not server ports.
+        let input = [
+            make(port: 51251, state: .closeWait),
+            make(port: 51255, state: .closeWait),
+            make(port: 51260, state: .timeWait),
+        ]
+        let result = PortScanner.filterServerSockets(pidEntries: input)
+        XCTAssertTrue(result.isEmpty, "Pure client should be filtered entirely, got: \(result.map(\.port))")
+    }
+
+    func testServerWithMatchingListenAndCloseWaitIsKept() {
+        // A real server: listens on :3000, has a CLOSE_WAIT on :3000 (client connection the server never closed).
+        // Both should be kept — the CLOSE_WAIT is a legitimate server-side leak signal.
+        let input = [
+            make(port: 3000, state: .listen),
+            make(port: 3000, state: .closeWait),
+        ]
+        let result = PortScanner.filterServerSockets(pidEntries: input)
+        XCTAssertEqual(result.count, 2)
+        XCTAssertTrue(result.contains { $0.tcpState == .listen && $0.port == 3000 })
+        XCTAssertTrue(result.contains { $0.tcpState == .closeWait && $0.port == 3000 })
+    }
+
+    func testServerWithOutboundClientSocketsDropsClient() {
+        // Mixed case: a server listens on :8080, also makes outbound calls with CLOSE_WAIT on ephemeral ports.
+        // Only the LISTEN and same-port zombies should be kept.
+        let input = [
+            make(port: 8080, state: .listen),
+            make(port: 51999, state: .closeWait),  // outbound client leak — drop
+            make(port: 8080, state: .timeWait),    // server-side connection in teardown — keep
+        ]
+        let result = PortScanner.filterServerSockets(pidEntries: input)
+        XCTAssertEqual(result.count, 2)
+        XCTAssertFalse(result.contains { $0.port == 51999 })
+        XCTAssertTrue(result.contains { $0.tcpState == .timeWait && $0.port == 8080 })
+    }
+
+    func testPureListenerIsKept() {
+        let input = [make(port: 5432, state: .listen, processName: "postgres")]
+        let result = PortScanner.filterServerSockets(pidEntries: input)
+        XCTAssertEqual(result.count, 1)
+    }
+
+    func testEmptyInputReturnsEmpty() {
+        XCTAssertTrue(PortScanner.filterServerSockets(pidEntries: []).isEmpty)
+    }
+
+    func testMultipleListenPortsCoexist() {
+        // A process can legitimately listen on several ports (e.g. HTTP + metrics + admin).
+        let input = [
+            make(port: 8080, state: .listen),
+            make(port: 9090, state: .listen),
+            make(port: 9090, state: .closeWait),  // keep — matches LISTEN
+            make(port: 50123, state: .closeWait), // drop — no matching LISTEN
+        ]
+        let result = PortScanner.filterServerSockets(pidEntries: input)
+        XCTAssertEqual(result.count, 3)
+        XCTAssertFalse(result.contains { $0.port == 50123 })
+    }
+
+    func testClaudeLikeScenarioEndToEnd() {
+        // Reproduces issue #10: Claude CLI process has only CLOSE_WAIT sockets on ephemeral ports
+        // from its HTTPS connections to anthropic.com. Without the filter it would appear in the UI
+        // tagged as "Back" because the cmd/cwd could incidentally match a Back keyword.
+        let claudeEntries = [
+            make(pid: 35301, port: 51287, state: .closeWait, processName: "claude"),
+            make(pid: 35301, port: 51293, state: .closeWait, processName: "claude"),
+            make(pid: 35301, port: 51421, state: .closeWait, processName: "claude"),
+        ]
+        let result = PortScanner.filterServerSockets(pidEntries: claudeEntries)
+        XCTAssertTrue(result.isEmpty)
+    }
+}

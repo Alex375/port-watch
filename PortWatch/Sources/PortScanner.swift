@@ -240,6 +240,23 @@ enum PortScanner: Sendable {
         let mcp: [String]
     }
 
+    /// Keep only server-side sockets: every LISTEN entry, plus any CLOSE_WAIT/TIME_WAIT
+    /// whose local port is *also* being LISTENed on by the same PID.
+    ///
+    /// Client-side connection sockets (outbound HTTP, etc.) end up in CLOSE_WAIT/TIME_WAIT
+    /// on an ephemeral local port — they are not a server port the user can act on and
+    /// would otherwise clutter the UI (e.g. Claude Code's HTTPS connections to anthropic.com
+    /// appearing as `:51251` with a spurious "Back" role).
+    ///
+    /// Assumes `pidEntries` all share the same `pid`. Pure function for unit testing.
+    static func filterServerSockets(pidEntries: [PortEntry]) -> [PortEntry] {
+        let listenPorts = Set(pidEntries.filter { $0.tcpState == .listen }.map { $0.port })
+        return pidEntries.filter { entry in
+            if entry.tcpState == .listen { return true }
+            return listenPorts.contains(entry.port)
+        }
+    }
+
     static func scanAllPorts(keywords: RoleKeywords? = nil) -> [PortEntry] {
         ProjectDetector.refreshDockerContainers()
         let pids = allPIDs()
@@ -269,6 +286,10 @@ enum PortScanner: Sendable {
                 }
             }
             guard hasTCPSocket else { continue }
+
+            // Per-PID buffer: we'll filter out orphan CLOSE_WAIT/TIME_WAIT sockets
+            // (client-side connection remnants) after scanning all FDs for this PID.
+            var pidEntries: [PortEntry] = []
 
             // Lazy-load process info only for PIDs with sockets
             func getName() -> String {
@@ -397,8 +418,12 @@ enum PortScanner: Sendable {
                     roleLabel: role.label,
                     roleIcon: role.icon
                 )
-                entries.append(entry)
+                pidEntries.append(entry)
             }
+
+            // Filter: keep LISTEN entries + CLOSE_WAIT/TIME_WAIT whose port matches a LISTEN
+            // on this same PID. Orphan zombie sockets (client-side outbound connections) are dropped.
+            entries.append(contentsOf: filterServerSockets(pidEntries: pidEntries))
         }
 
         // Deduplicate by (port, pid) — same process can listen on IPv4 + IPv6
