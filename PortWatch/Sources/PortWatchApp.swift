@@ -412,6 +412,8 @@ struct MenuContentView: View {
 // MARK: - Footer Button
 
 /// Footer button with icon + label and a subtle hover background.
+/// Note: the old `warningBadges`/`iconBadge`/`roleColor`/`statusColor` helpers were
+/// intentionally removed in this branch — they now live inside `PortRowView`.
 struct FooterButton: View {
     let icon: String
     let label: String

@@ -50,3 +50,6 @@ screenshots/Screenshot*
 .vscode/
 *.swp
 *~
+
+# Stray worktrees created by agents/tools
+.claude/worktrees/

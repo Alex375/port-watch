@@ -19,21 +19,22 @@ final class TCPStateTests: XCTestCase {
         XCTAssertEqual(TCPState.timeWait.displayName, "TIME_WAIT")
     }
 
-    func testIsZombieTrueForCloseWait() {
-        XCTAssertTrue(TCPState.closeWait.isZombie)
+    func testIsZombieCandidateTrueForCloseWait() {
+        XCTAssertTrue(TCPState.closeWait.isZombieCandidate)
     }
 
-    func testIsZombieTrueForTimeWait() {
-        XCTAssertTrue(TCPState.timeWait.isZombie)
+    func testIsZombieCandidateFalseForTimeWait() {
+        // TIME_WAIT is a normal TCP state (2*MSL cleanup) and must never be flagged as a zombie.
+        XCTAssertFalse(TCPState.timeWait.isZombieCandidate)
     }
 
-    func testIsZombieFalseForNonZombieStates() {
+    func testIsZombieCandidateFalseForNonZombieStates() {
         let nonZombie: [TCPState] = [
             .closed, .listen, .synSent, .synReceived,
-            .established, .finWait1, .closing, .lastAck, .finWait2
+            .established, .finWait1, .closing, .lastAck, .finWait2, .timeWait
         ]
         for state in nonZombie {
-            XCTAssertFalse(state.isZombie, "\(state.displayName) should not be zombie")
+            XCTAssertFalse(state.isZombieCandidate, "\(state.displayName) should not be a zombie candidate")
         }
     }
 
@@ -435,31 +436,31 @@ final class PortEntryDisplayTests: XCTestCase {
 
     func testCommandSummaryWithCommandLine() {
         let entry = makeEntry(commandLine: "node server.js --port 3000", processName: "node")
-        let display = PortEntryDisplay(entry: entry, cpuPercent: nil)
+        let display = PortEntryDisplay(entry: entry, cpuPercent: nil, isZombie: false)
         XCTAssertEqual(display.commandSummary, "node server.js --port 3000")
     }
 
     func testCommandSummaryFallsBackToProcessName() {
         let entry = makeEntry(commandLine: "", processName: "nginx")
-        let display = PortEntryDisplay(entry: entry, cpuPercent: nil)
+        let display = PortEntryDisplay(entry: entry, cpuPercent: nil, isZombie: false)
         XCTAssertEqual(display.commandSummary, "nginx")
     }
 
     func testDisplayIdMatchesEntryId() {
         let entry = makeEntry()
-        let display = PortEntryDisplay(entry: entry, cpuPercent: 12.5)
+        let display = PortEntryDisplay(entry: entry, cpuPercent: 12.5, isZombie: false)
         XCTAssertEqual(display.id, entry.id)
     }
 
     func testCpuPercentIsStored() {
         let entry = makeEntry()
-        let display = PortEntryDisplay(entry: entry, cpuPercent: 42.5)
+        let display = PortEntryDisplay(entry: entry, cpuPercent: 42.5, isZombie: false)
         XCTAssertEqual(display.cpuPercent, 42.5)
     }
 
     func testCpuPercentNil() {
         let entry = makeEntry()
-        let display = PortEntryDisplay(entry: entry, cpuPercent: nil)
+        let display = PortEntryDisplay(entry: entry, cpuPercent: nil, isZombie: false)
         XCTAssertNil(display.cpuPercent)
     }
 }
@@ -486,7 +487,7 @@ final class ProjectGroupTests: XCTestCase {
             roleLabel: nil,
             roleIcon: nil
         )
-        let display = PortEntryDisplay(entry: entry, cpuPercent: nil)
+        let display = PortEntryDisplay(entry: entry, cpuPercent: nil, isZombie: false)
         let group = ProjectGroup(projectName: "MyApp", entries: [display])
 
         XCTAssertEqual(group.projectName, "MyApp")
@@ -510,8 +511,8 @@ final class ProjectGroupTests: XCTestCase {
             projectName: "MyApp", worktreeName: nil, roleLabel: nil, roleIcon: nil
         )
         let displays = [
-            PortEntryDisplay(entry: entry1, cpuPercent: nil),
-            PortEntryDisplay(entry: entry2, cpuPercent: nil),
+            PortEntryDisplay(entry: entry1, cpuPercent: nil, isZombie: false),
+            PortEntryDisplay(entry: entry2, cpuPercent: nil, isZombie: false),
         ]
         let group = ProjectGroup(projectName: "MyApp", entries: displays)
         XCTAssertEqual(group.entries.count, 2)
@@ -1134,7 +1135,201 @@ final class AppSettingsTests: XCTestCase {
     }
 }
 
-// MARK: - filterIgnoredProcesses Tests
+// MARK: - Zombie Streak Tests (from #11)
+
+final class ZombieStreakTests: XCTestCase {
+
+    func testNonCandidateStateYieldsNoStreak() {
+        let result = PortMonitor.advanceZombieStreak(tcpState: .listen, previousStreak: 0)
+        XCTAssertEqual(result.streak, 0)
+        XCTAssertFalse(result.isZombie)
+    }
+
+    func testTimeWaitIsNeverZombie() {
+        // TIME_WAIT is a normal TCP teardown state — even across many scans it must not be flagged.
+        let result = PortMonitor.advanceZombieStreak(tcpState: .timeWait, previousStreak: 99)
+        XCTAssertEqual(result.streak, 0)
+        XCTAssertFalse(result.isZombie)
+    }
+
+    func testCloseWaitFirstScanIsNotZombieYet() {
+        let result = PortMonitor.advanceZombieStreak(tcpState: .closeWait, previousStreak: 0, threshold: 3)
+        XCTAssertEqual(result.streak, 1)
+        XCTAssertFalse(result.isZombie)
+    }
+
+    func testCloseWaitBelowThresholdIsNotZombie() {
+        let result = PortMonitor.advanceZombieStreak(tcpState: .closeWait, previousStreak: 1, threshold: 3)
+        XCTAssertEqual(result.streak, 2)
+        XCTAssertFalse(result.isZombie)
+    }
+
+    func testCloseWaitAtThresholdIsZombie() {
+        let result = PortMonitor.advanceZombieStreak(tcpState: .closeWait, previousStreak: 2, threshold: 3)
+        XCTAssertEqual(result.streak, 3)
+        XCTAssertTrue(result.isZombie)
+    }
+
+    func testCloseWaitAboveThresholdStaysZombie() {
+        let result = PortMonitor.advanceZombieStreak(tcpState: .closeWait, previousStreak: 10, threshold: 3)
+        XCTAssertEqual(result.streak, 11)
+        XCTAssertTrue(result.isZombie)
+    }
+
+    func testThresholdOneFlagsImmediately() {
+        let result = PortMonitor.advanceZombieStreak(tcpState: .closeWait, previousStreak: 0, threshold: 1)
+        XCTAssertEqual(result.streak, 1)
+        XCTAssertTrue(result.isZombie)
+    }
+
+    func testSimulatedSustainedCloseWaitBecomesZombie() {
+        // Simulate 5 consecutive CLOSE_WAIT scans with threshold 3.
+        var streak = 0
+        var zombieScans = 0
+        for _ in 1...5 {
+            let r = PortMonitor.advanceZombieStreak(tcpState: .closeWait, previousStreak: streak, threshold: 3)
+            streak = r.streak
+            if r.isZombie { zombieScans += 1 }
+        }
+        // Scans 3, 4, 5 should all report zombie.
+        XCTAssertEqual(zombieScans, 3)
+        XCTAssertEqual(streak, 5)
+    }
+
+    func testStreakKeyFormat() {
+        XCTAssertEqual(PortMonitor.streakKey(pid: 1234, port: 8080), "1234-8080")
+        XCTAssertEqual(PortMonitor.streakKey(pid: 1, port: 3000), "1-3000")
+    }
+
+    func testZombieConfirmationScansDefault() {
+        // Guard against accidental changes to the published default.
+        XCTAssertEqual(PortMonitor.zombieConfirmationScans, 3)
+    }
+}
+
+// MARK: - PortEntryDisplay.isZombie Tests (from #11)
+
+final class PortEntryDisplayZombieTests: XCTestCase {
+
+    private func makeEntry(tcpState: TCPState = .listen, projectName: String = "App") -> PortEntry {
+        PortEntry(
+            id: "8080-1-0",
+            port: 8080, pid: 1,
+            processName: "node", processPath: "", commandLine: "", cwd: "",
+            tcpState: tcpState,
+            processStartTime: Date(),
+            residentMemoryBytes: 0, totalCPUTimeNs: 0,
+            projectName: projectName, worktreeName: nil,
+            roleLabel: nil, roleIcon: nil
+        )
+    }
+
+    func testIsZombieIsStoredOnDisplay() {
+        let display = PortEntryDisplay(entry: makeEntry(tcpState: .closeWait), cpuPercent: nil, isZombie: true)
+        XCTAssertTrue(display.isZombie)
+    }
+
+    func testIsZombieFalseByDefault() {
+        let display = PortEntryDisplay(entry: makeEntry(), cpuPercent: nil, isZombie: false)
+        XCTAssertFalse(display.isZombie)
+    }
+}
+
+// MARK: - PortScanner.filterServerSockets Tests (from #12)
+
+final class FilterServerSocketsTests: XCTestCase {
+
+    /// Build a minimal PortEntry for a given pid/port/state.
+    private func make(pid: Int32 = 1234, port: UInt16, state: TCPState, processName: String = "proc") -> PortEntry {
+        PortEntry(
+            id: "\(port)-\(pid)-\(UUID().uuidString.prefix(4))",
+            port: port, pid: pid,
+            processName: processName, processPath: "", commandLine: "", cwd: "",
+            tcpState: state,
+            processStartTime: Date(),
+            residentMemoryBytes: 0, totalCPUTimeNs: 0,
+            projectName: "Other", worktreeName: nil,
+            roleLabel: nil, roleIcon: nil
+        )
+    }
+
+    func testPureClientProcessIsFilteredOut() {
+        // Claude-like scenario: process has only CLOSE_WAIT on ephemeral ports (no LISTEN).
+        // These are outbound HTTPS connections in teardown, not server ports.
+        let input = [
+            make(port: 51251, state: .closeWait),
+            make(port: 51255, state: .closeWait),
+            make(port: 51260, state: .timeWait),
+        ]
+        let result = PortScanner.filterServerSockets(pidEntries: input)
+        XCTAssertTrue(result.isEmpty, "Pure client should be filtered entirely, got: \(result.map(\.port))")
+    }
+
+    func testServerWithMatchingListenAndCloseWaitIsKept() {
+        // A real server: listens on :3000, has a CLOSE_WAIT on :3000 (client connection the server never closed).
+        // Both should be kept — the CLOSE_WAIT is a legitimate server-side leak signal.
+        let input = [
+            make(port: 3000, state: .listen),
+            make(port: 3000, state: .closeWait),
+        ]
+        let result = PortScanner.filterServerSockets(pidEntries: input)
+        XCTAssertEqual(result.count, 2)
+        XCTAssertTrue(result.contains { $0.tcpState == .listen && $0.port == 3000 })
+        XCTAssertTrue(result.contains { $0.tcpState == .closeWait && $0.port == 3000 })
+    }
+
+    func testServerWithOutboundClientSocketsDropsClient() {
+        // Mixed case: a server listens on :8080, also makes outbound calls with CLOSE_WAIT on ephemeral ports.
+        // Only the LISTEN and same-port zombies should be kept.
+        let input = [
+            make(port: 8080, state: .listen),
+            make(port: 51999, state: .closeWait),  // outbound client leak — drop
+            make(port: 8080, state: .timeWait),    // server-side connection in teardown — keep
+        ]
+        let result = PortScanner.filterServerSockets(pidEntries: input)
+        XCTAssertEqual(result.count, 2)
+        XCTAssertFalse(result.contains { $0.port == 51999 })
+        XCTAssertTrue(result.contains { $0.tcpState == .timeWait && $0.port == 8080 })
+    }
+
+    func testPureListenerIsKept() {
+        let input = [make(port: 5432, state: .listen, processName: "postgres")]
+        let result = PortScanner.filterServerSockets(pidEntries: input)
+        XCTAssertEqual(result.count, 1)
+    }
+
+    func testEmptyInputReturnsEmpty() {
+        XCTAssertTrue(PortScanner.filterServerSockets(pidEntries: []).isEmpty)
+    }
+
+    func testMultipleListenPortsCoexist() {
+        // A process can legitimately listen on several ports (e.g. HTTP + metrics + admin).
+        let input = [
+            make(port: 8080, state: .listen),
+            make(port: 9090, state: .listen),
+            make(port: 9090, state: .closeWait),  // keep — matches LISTEN
+            make(port: 50123, state: .closeWait), // drop — no matching LISTEN
+        ]
+        let result = PortScanner.filterServerSockets(pidEntries: input)
+        XCTAssertEqual(result.count, 3)
+        XCTAssertFalse(result.contains { $0.port == 50123 })
+    }
+
+    func testClaudeLikeScenarioEndToEnd() {
+        // Reproduces issue #10: Claude CLI process has only CLOSE_WAIT sockets on ephemeral ports
+        // from its HTTPS connections to anthropic.com. Without the filter it would appear in the UI
+        // tagged as "Back" because the cmd/cwd could incidentally match a Back keyword.
+        let claudeEntries = [
+            make(pid: 35301, port: 51287, state: .closeWait, processName: "claude"),
+            make(pid: 35301, port: 51293, state: .closeWait, processName: "claude"),
+            make(pid: 35301, port: 51421, state: .closeWait, processName: "claude"),
+        ]
+        let result = PortScanner.filterServerSockets(pidEntries: claudeEntries)
+        XCTAssertTrue(result.isEmpty)
+    }
+}
+
+// MARK: - filterIgnoredProcesses Tests (from #13 — UI branch)
 
 final class FilterIgnoredProcessesTests: XCTestCase {
 

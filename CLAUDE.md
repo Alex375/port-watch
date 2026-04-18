@@ -65,7 +65,7 @@ All port/process detection uses macOS native C APIs via `import Darwin` -- no `l
 8. `proc_pidinfo(PROC_PIDTASKINFO)` — task info (resident memory, CPU time in Mach ticks)
 9. `mach_timebase_info` — convert Mach ticks to nanoseconds for CPU % calculation
 
-The scan filters for TCP sockets in LISTEN, CLOSE_WAIT, or TIME_WAIT states. Results are deduplicated by (port, pid) to handle dual IPv4/IPv6 listeners.
+The scan filters for TCP sockets in LISTEN, CLOSE_WAIT, or TIME_WAIT states. A second filter (`PortScanner.filterServerSockets`) keeps each CLOSE_WAIT/TIME_WAIT only if the same PID is also LISTENing on that port — this drops client-side outbound connection remnants (e.g. a browser or AI tool's HTTPS connections sitting in CLOSE_WAIT on ephemeral ports) so only genuine server state reaches the UI. Results are deduplicated by (port, pid) to handle dual IPv4/IPv6 listeners.
 
 ### Project Detection (`ProjectDetector`)
 
@@ -126,7 +126,7 @@ When a feature is added, update the relevant section in the README (Features, Ro
 - **Zero silent errors** — every failure surfaces to the user via `KillReport` with full context (operation, port, PID, system error message).
 - **UI state must match reality** — never mark a process as killed before confirming it's dead. The scan re-runs after every kill.
 - **Port conflict detection** — multiple PIDs on the same port are flagged with a yellow warning badge.
-- Zombie detection: processes in `CLOSE_WAIT` or `TIME_WAIT` state, marked with a red badge.
+- Zombie detection: only sockets in `CLOSE_WAIT` sustained across 3 consecutive scans are flagged (`PortMonitor.zombieConfirmationScans`). `TIME_WAIT` is a normal TCP state and is never a zombie. The "Other" project is excluded from the menubar zombie badge to avoid noise from system-level sockets.
 - CPU/RAM warnings are conditional — only shown when exceeding configurable thresholds (default: 50% CPU, 500 MB RAM).
 
 ## Git Workflow

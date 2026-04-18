@@ -29,7 +29,8 @@ struct PortRowView: View {
 
     private var cpuOver: Bool { (display.cpuPercent ?? 0) > settings.cpuThreshold }
     private var ramOver: Bool { display.entry.memoryMB > settings.ramThresholdMB }
-    private var isZombie: Bool { display.entry.tcpState.isZombie }
+    /// Persistent zombie flag from `PortMonitor` — only true after N consecutive CLOSE_WAIT scans (PR #11).
+    private var isZombie: Bool { display.isZombie }
     private var hasWarning: Bool { isZombie || cpuOver || ramOver || isConflict }
 
     /// Primary color that drives the accent strip and role-related tints.
