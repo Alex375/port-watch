@@ -23,6 +23,13 @@ final class PortMonitor {
     /// Number of consecutive scans a `(pid, port)` must remain in `CLOSE_WAIT` before being flagged as a zombie.
     nonisolated static let zombieConfirmationScans = 3
 
+    /// Drop entries whose process name is in the user's ignore list (case-insensitive).
+    /// Pure function — exposed for unit testing. `ignored` must be pre-lowercased.
+    nonisolated static func filterIgnoredProcesses(_ entries: [PortEntry], ignored: Set<String>) -> [PortEntry] {
+        guard !ignored.isEmpty else { return entries }
+        return entries.filter { !ignored.contains($0.processName.lowercased()) }
+    }
+
     var groupedEntries: [ProjectGroup] {
         let grouped = Dictionary(grouping: entries) { $0.entry.projectName }
         return grouped.map { ProjectGroup(projectName: $0.key, entries: $0.value) }
@@ -105,8 +112,10 @@ final class PortMonitor {
             dbProc: settings.dbProcessNames,
             mcp: settings.mcpKeywords
         )
+        let ignoredLowercased = Set(settings.ignoredProcesses.map { $0.lowercased() })
         let rawEntries = await Task.detached(priority: .utility) {
-            PortScanner.scanAllPorts(keywords: kw)
+            let all = PortScanner.scanAllPorts(keywords: kw)
+            return Self.filterIgnoredProcesses(all, ignored: ignoredLowercased)
         }.value
 
         let now = Date()
@@ -188,13 +197,13 @@ final class PortMonitor {
         self.lastScanDate = now
     }
 
-    /// Set the kill report and schedule auto-dismiss after 15 seconds.
+    /// Set the kill report and schedule auto-dismiss after 7 seconds.
     private func setKillReport(_ report: KillReport?) {
         killReportDismissTask?.cancel()
         lastKillReport = report
         guard report != nil else { return }
         killReportDismissTask = Task {
-            try? await Task.sleep(for: .seconds(15))
+            try? await Task.sleep(for: .seconds(7))
             guard !Task.isCancelled else { return }
             withAnimation { lastKillReport = nil }
         }
