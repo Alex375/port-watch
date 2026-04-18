@@ -126,7 +126,7 @@ When a feature is added, update the relevant section in the README (Features, Ro
 - **Zero silent errors** — every failure surfaces to the user via `KillReport` with full context (operation, port, PID, system error message).
 - **UI state must match reality** — never mark a process as killed before confirming it's dead. The scan re-runs after every kill.
 - **Port conflict detection** — multiple PIDs on the same port are flagged with a yellow warning badge.
-- Zombie detection: processes in `CLOSE_WAIT` or `TIME_WAIT` state, marked with a red badge.
+- Zombie detection: only sockets in `CLOSE_WAIT` sustained across 3 consecutive scans are flagged (`PortMonitor.zombieConfirmationScans`). `TIME_WAIT` is a normal TCP state and is never a zombie. The "Other" project is excluded from the menubar zombie badge to avoid noise from system-level sockets.
 - CPU/RAM warnings are conditional — only shown when exceeding configurable thresholds (default: 50% CPU, 500 MB RAM).
 
 ## Git Workflow

@@ -416,13 +416,13 @@ struct MenuContentView: View {
         let isConflict = monitor.conflictPorts.contains(display.entry.port)
         let cpuOver = (display.cpuPercent ?? 0) > s.cpuThreshold
         let ramOver = display.entry.memoryMB > s.ramThresholdMB
-        let hasWarning = display.entry.tcpState.isZombie || cpuOver || ramOver || isConflict
+        let hasWarning = display.isZombie || cpuOver || ramOver || isConflict
         if hasWarning {
             HStack(spacing: 4) {
                 if isConflict {
                     iconBadge("arrow.triangle.branch", "conflict", color: .secondary)
                 }
-                if display.entry.tcpState.isZombie {
+                if display.isZombie {
                     iconBadge("xmark.seal.fill", "ZOMBIE", color: .red)
                 }
                 if let cpu = display.cpuPercent, cpu > s.cpuThreshold {
@@ -462,7 +462,7 @@ struct MenuContentView: View {
     }
 
     private func statusColor(for display: PortEntryDisplay) -> Color {
-        if display.entry.tcpState.isZombie { return .red }
+        if display.isZombie { return .red }
         if let cpu = display.cpuPercent, cpu > monitor.settings.cpuThreshold { return .orange }
         return .green
     }
