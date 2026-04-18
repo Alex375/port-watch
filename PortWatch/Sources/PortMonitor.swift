@@ -197,13 +197,13 @@ final class PortMonitor {
         self.lastScanDate = now
     }
 
-    /// Set the kill report and schedule auto-dismiss after 7 seconds.
+    /// Set the kill report and schedule auto-dismiss after 4 seconds.
     private func setKillReport(_ report: KillReport?) {
         killReportDismissTask?.cancel()
         lastKillReport = report
         guard report != nil else { return }
         killReportDismissTask = Task {
-            try? await Task.sleep(for: .seconds(7))
+            try? await Task.sleep(for: .seconds(4))
             guard !Task.isCancelled else { return }
             withAnimation { lastKillReport = nil }
         }
