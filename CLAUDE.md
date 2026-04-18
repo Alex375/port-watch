@@ -65,7 +65,7 @@ All port/process detection uses macOS native C APIs via `import Darwin` -- no `l
 8. `proc_pidinfo(PROC_PIDTASKINFO)` — task info (resident memory, CPU time in Mach ticks)
 9. `mach_timebase_info` — convert Mach ticks to nanoseconds for CPU % calculation
 
-The scan filters for TCP sockets in LISTEN, CLOSE_WAIT, or TIME_WAIT states. Results are deduplicated by (port, pid) to handle dual IPv4/IPv6 listeners.
+The scan filters for TCP sockets in LISTEN, CLOSE_WAIT, or TIME_WAIT states. A second filter (`PortScanner.filterServerSockets`) keeps each CLOSE_WAIT/TIME_WAIT only if the same PID is also LISTENing on that port — this drops client-side outbound connection remnants (e.g. a browser or AI tool's HTTPS connections sitting in CLOSE_WAIT on ephemeral ports) so only genuine server state reaches the UI. Results are deduplicated by (port, pid) to handle dual IPv4/IPv6 listeners.
 
 ### Project Detection (`ProjectDetector`)
 
