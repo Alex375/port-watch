@@ -14,10 +14,14 @@ final class PortMonitor {
         entries.filter { $0.entry.projectName != "Other" }.count
     }
 
-    /// Whether any entry is a zombie — used for menubar icon.
+    /// Whether any *project* entry is a confirmed zombie — used for menubar icon.
+    /// "Other" is excluded to avoid alarms on system-level sockets the user cannot act on.
     var hasZombie: Bool {
-        entries.contains { $0.entry.tcpState.isZombie }
+        entries.contains { $0.isZombie && $0.entry.projectName != "Other" }
     }
+
+    /// Number of consecutive scans a `(pid, port)` must remain in `CLOSE_WAIT` before being flagged as a zombie.
+    nonisolated static let zombieConfirmationScans = 3
 
     var groupedEntries: [ProjectGroup] {
         let grouped = Dictionary(grouping: entries) { $0.entry.projectName }
@@ -51,6 +55,27 @@ final class PortMonitor {
     private var knownPorts: Set<UInt16> = []
     private var previousConflicts: Set<UInt16> = []
     private var scanTask: Task<Void, Never>? = nil
+
+    /// Streak counter per `(pid, port)` for `CLOSE_WAIT` sockets.
+    /// Reset to 0 when the socket leaves `CLOSE_WAIT` or disappears.
+    private var closeWaitStreaks: [String: Int] = [:]
+
+    nonisolated static func streakKey(pid: Int32, port: UInt16) -> String {
+        "\(pid)-\(port)"
+    }
+
+    /// Advance the zombie streak for one scan.
+    /// Returns the new streak value (0 if the socket isn't a zombie candidate) and whether it's a confirmed zombie.
+    /// Exposed for unit testing.
+    nonisolated static func advanceZombieStreak(
+        tcpState: TCPState,
+        previousStreak: Int,
+        threshold: Int = zombieConfirmationScans
+    ) -> (streak: Int, isZombie: Bool) {
+        guard tcpState.isZombieCandidate else { return (0, false) }
+        let streak = previousStreak + 1
+        return (streak, streak >= threshold)
+    }
 
     init() {
         startScanning()
@@ -87,6 +112,7 @@ final class PortMonitor {
         let now = Date()
         var displayEntries: [PortEntryDisplay] = []
         var newSamples: [Int32: CPUSample] = [:]
+        var newStreaks: [String: Int] = [:]
 
         for entry in rawEntries {
             var cpuPercent: Double? = nil
@@ -104,7 +130,15 @@ final class PortMonitor {
                 totalCPUTimeNs: entry.totalCPUTimeNs,
                 wallTime: now
             )
-            displayEntries.append(PortEntryDisplay(entry: entry, cpuPercent: cpuPercent))
+
+            let key = Self.streakKey(pid: entry.pid, port: entry.port)
+            let result = Self.advanceZombieStreak(
+                tcpState: entry.tcpState,
+                previousStreak: closeWaitStreaks[key] ?? 0
+            )
+            if result.streak > 0 { newStreaks[key] = result.streak }
+
+            displayEntries.append(PortEntryDisplay(entry: entry, cpuPercent: cpuPercent, isZombie: result.isZombie))
         }
 
         // Detect port conflicts: multiple PIDs on the same port
@@ -150,6 +184,7 @@ final class PortMonitor {
 
         self.entries = displayEntries
         self.previousSamples = newSamples
+        self.closeWaitStreaks = newStreaks
         self.lastScanDate = now
     }
 

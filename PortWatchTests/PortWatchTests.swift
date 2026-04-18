@@ -19,21 +19,22 @@ final class TCPStateTests: XCTestCase {
         XCTAssertEqual(TCPState.timeWait.displayName, "TIME_WAIT")
     }
 
-    func testIsZombieTrueForCloseWait() {
-        XCTAssertTrue(TCPState.closeWait.isZombie)
+    func testIsZombieCandidateTrueForCloseWait() {
+        XCTAssertTrue(TCPState.closeWait.isZombieCandidate)
     }
 
-    func testIsZombieTrueForTimeWait() {
-        XCTAssertTrue(TCPState.timeWait.isZombie)
+    func testIsZombieCandidateFalseForTimeWait() {
+        // TIME_WAIT is a normal TCP state (2*MSL cleanup) and must never be flagged as a zombie.
+        XCTAssertFalse(TCPState.timeWait.isZombieCandidate)
     }
 
-    func testIsZombieFalseForNonZombieStates() {
+    func testIsZombieCandidateFalseForNonZombieStates() {
         let nonZombie: [TCPState] = [
             .closed, .listen, .synSent, .synReceived,
-            .established, .finWait1, .closing, .lastAck, .finWait2
+            .established, .finWait1, .closing, .lastAck, .finWait2, .timeWait
         ]
         for state in nonZombie {
-            XCTAssertFalse(state.isZombie, "\(state.displayName) should not be zombie")
+            XCTAssertFalse(state.isZombieCandidate, "\(state.displayName) should not be a zombie candidate")
         }
     }
 
@@ -435,31 +436,31 @@ final class PortEntryDisplayTests: XCTestCase {
 
     func testCommandSummaryWithCommandLine() {
         let entry = makeEntry(commandLine: "node server.js --port 3000", processName: "node")
-        let display = PortEntryDisplay(entry: entry, cpuPercent: nil)
+        let display = PortEntryDisplay(entry: entry, cpuPercent: nil, isZombie: false)
         XCTAssertEqual(display.commandSummary, "node server.js --port 3000")
     }
 
     func testCommandSummaryFallsBackToProcessName() {
         let entry = makeEntry(commandLine: "", processName: "nginx")
-        let display = PortEntryDisplay(entry: entry, cpuPercent: nil)
+        let display = PortEntryDisplay(entry: entry, cpuPercent: nil, isZombie: false)
         XCTAssertEqual(display.commandSummary, "nginx")
     }
 
     func testDisplayIdMatchesEntryId() {
         let entry = makeEntry()
-        let display = PortEntryDisplay(entry: entry, cpuPercent: 12.5)
+        let display = PortEntryDisplay(entry: entry, cpuPercent: 12.5, isZombie: false)
         XCTAssertEqual(display.id, entry.id)
     }
 
     func testCpuPercentIsStored() {
         let entry = makeEntry()
-        let display = PortEntryDisplay(entry: entry, cpuPercent: 42.5)
+        let display = PortEntryDisplay(entry: entry, cpuPercent: 42.5, isZombie: false)
         XCTAssertEqual(display.cpuPercent, 42.5)
     }
 
     func testCpuPercentNil() {
         let entry = makeEntry()
-        let display = PortEntryDisplay(entry: entry, cpuPercent: nil)
+        let display = PortEntryDisplay(entry: entry, cpuPercent: nil, isZombie: false)
         XCTAssertNil(display.cpuPercent)
     }
 }
@@ -486,7 +487,7 @@ final class ProjectGroupTests: XCTestCase {
             roleLabel: nil,
             roleIcon: nil
         )
-        let display = PortEntryDisplay(entry: entry, cpuPercent: nil)
+        let display = PortEntryDisplay(entry: entry, cpuPercent: nil, isZombie: false)
         let group = ProjectGroup(projectName: "MyApp", entries: [display])
 
         XCTAssertEqual(group.projectName, "MyApp")
@@ -510,8 +511,8 @@ final class ProjectGroupTests: XCTestCase {
             projectName: "MyApp", worktreeName: nil, roleLabel: nil, roleIcon: nil
         )
         let displays = [
-            PortEntryDisplay(entry: entry1, cpuPercent: nil),
-            PortEntryDisplay(entry: entry2, cpuPercent: nil),
+            PortEntryDisplay(entry: entry1, cpuPercent: nil, isZombie: false),
+            PortEntryDisplay(entry: entry2, cpuPercent: nil, isZombie: false),
         ]
         let group = ProjectGroup(projectName: "MyApp", entries: displays)
         XCTAssertEqual(group.entries.count, 2)
@@ -1131,5 +1132,105 @@ final class AppSettingsTests: XCTestCase {
         // The didSet should write to UserDefaults
         let stored = UserDefaults.standard.double(forKey: "cpuThreshold")
         XCTAssertEqual(stored, 75.0)
+    }
+}
+
+// MARK: - Zombie Streak Tests
+
+final class ZombieStreakTests: XCTestCase {
+
+    func testNonCandidateStateYieldsNoStreak() {
+        let result = PortMonitor.advanceZombieStreak(tcpState: .listen, previousStreak: 0)
+        XCTAssertEqual(result.streak, 0)
+        XCTAssertFalse(result.isZombie)
+    }
+
+    func testTimeWaitIsNeverZombie() {
+        // TIME_WAIT is a normal TCP teardown state — even across many scans it must not be flagged.
+        let result = PortMonitor.advanceZombieStreak(tcpState: .timeWait, previousStreak: 99)
+        XCTAssertEqual(result.streak, 0)
+        XCTAssertFalse(result.isZombie)
+    }
+
+    func testCloseWaitFirstScanIsNotZombieYet() {
+        let result = PortMonitor.advanceZombieStreak(tcpState: .closeWait, previousStreak: 0, threshold: 3)
+        XCTAssertEqual(result.streak, 1)
+        XCTAssertFalse(result.isZombie)
+    }
+
+    func testCloseWaitBelowThresholdIsNotZombie() {
+        let result = PortMonitor.advanceZombieStreak(tcpState: .closeWait, previousStreak: 1, threshold: 3)
+        XCTAssertEqual(result.streak, 2)
+        XCTAssertFalse(result.isZombie)
+    }
+
+    func testCloseWaitAtThresholdIsZombie() {
+        let result = PortMonitor.advanceZombieStreak(tcpState: .closeWait, previousStreak: 2, threshold: 3)
+        XCTAssertEqual(result.streak, 3)
+        XCTAssertTrue(result.isZombie)
+    }
+
+    func testCloseWaitAboveThresholdStaysZombie() {
+        let result = PortMonitor.advanceZombieStreak(tcpState: .closeWait, previousStreak: 10, threshold: 3)
+        XCTAssertEqual(result.streak, 11)
+        XCTAssertTrue(result.isZombie)
+    }
+
+    func testThresholdOneFlagsImmediately() {
+        let result = PortMonitor.advanceZombieStreak(tcpState: .closeWait, previousStreak: 0, threshold: 1)
+        XCTAssertEqual(result.streak, 1)
+        XCTAssertTrue(result.isZombie)
+    }
+
+    func testSimulatedSustainedCloseWaitBecomesZombie() {
+        // Simulate 5 consecutive CLOSE_WAIT scans with threshold 3.
+        var streak = 0
+        var zombieScans = 0
+        for _ in 1...5 {
+            let r = PortMonitor.advanceZombieStreak(tcpState: .closeWait, previousStreak: streak, threshold: 3)
+            streak = r.streak
+            if r.isZombie { zombieScans += 1 }
+        }
+        // Scans 3, 4, 5 should all report zombie.
+        XCTAssertEqual(zombieScans, 3)
+        XCTAssertEqual(streak, 5)
+    }
+
+    func testStreakKeyFormat() {
+        XCTAssertEqual(PortMonitor.streakKey(pid: 1234, port: 8080), "1234-8080")
+        XCTAssertEqual(PortMonitor.streakKey(pid: 1, port: 3000), "1-3000")
+    }
+
+    func testZombieConfirmationScansDefault() {
+        // Guard against accidental changes to the published default.
+        XCTAssertEqual(PortMonitor.zombieConfirmationScans, 3)
+    }
+}
+
+// MARK: - PortEntryDisplay.isZombie Tests
+
+final class PortEntryDisplayZombieTests: XCTestCase {
+
+    private func makeEntry(tcpState: TCPState = .listen, projectName: String = "App") -> PortEntry {
+        PortEntry(
+            id: "8080-1-0",
+            port: 8080, pid: 1,
+            processName: "node", processPath: "", commandLine: "", cwd: "",
+            tcpState: tcpState,
+            processStartTime: Date(),
+            residentMemoryBytes: 0, totalCPUTimeNs: 0,
+            projectName: projectName, worktreeName: nil,
+            roleLabel: nil, roleIcon: nil
+        )
+    }
+
+    func testIsZombieIsStoredOnDisplay() {
+        let display = PortEntryDisplay(entry: makeEntry(tcpState: .closeWait), cpuPercent: nil, isZombie: true)
+        XCTAssertTrue(display.isZombie)
+    }
+
+    func testIsZombieFalseByDefault() {
+        let display = PortEntryDisplay(entry: makeEntry(), cpuPercent: nil, isZombie: false)
+        XCTAssertFalse(display.isZombie)
     }
 }

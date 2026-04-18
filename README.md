@@ -82,7 +82,7 @@ All keywords are editable in Settings.
 
 | Indicator | Meaning | Badge |
 |---|---|---|
-| Zombie process | `CLOSE_WAIT` or `TIME_WAIT` state | 🔴 Red |
+| Zombie process | `CLOSE_WAIT` sustained across 3 consecutive scans (real socket leak) | 🔴 Red |
 | Port conflict | Multiple PIDs on the same port | 🟡 Yellow |
 | High CPU | Exceeds threshold (default: 50%) | 🟠 Orange |
 | High RAM | Exceeds threshold (default: 500 MB) | 🟠 Orange |
@@ -94,7 +94,7 @@ All keywords are editable in Settings.
 | No project ports | Eye closed |
 | 1–3 ports | Eye open |
 | 4–8 ports | Eye filled |
-| 9+ ports or zombie detected | Eye with warning |
+| 9+ ports or zombie detected in a project | Eye with warning |
 
 ### Notifications
 
