@@ -102,7 +102,8 @@ Each process is tagged with a role based on **configurable keyword matching** ag
 | Indicator | Meaning |
 |---|---|
 | **Zombie** | `CLOSE_WAIT` sustained across 3 consecutive scans (real socket leak) |
-| **Conflict** | Multiple PIDs listening on the same port |
+| **Conflict** | Multiple *unrelated* PIDs listening on the same port |
+| **Worker fleet** `×N` | Master + workers sharing one listening socket (Python `multiprocessing`, gunicorn, uvicorn, nginx, Node cluster). Collapsed into a single row with aggregated CPU/RAM — not a conflict. |
 | **High CPU** | Exceeds threshold (default: 50%) |
 | **High RAM** | Exceeds threshold (default: 500 MB) |
 

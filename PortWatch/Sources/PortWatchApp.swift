@@ -34,6 +34,10 @@ struct MenuContentView: View {
     @State private var isRefreshing = false
     @State private var updater = UpdateChecker.shared
     @State private var isOtherCollapsed = true
+    /// Measured height of the port list content. Drives the ScrollView's frame height explicitly,
+    /// so that expanding a row animates the container smoothly instead of oscillating between
+    /// "fits" and "scrolls" states (would trigger scroll-bar flicker — issue #20).
+    @State private var portsContentHeight: CGFloat = 0
 
     /// Scan indicator color: green when healthy, orange while scanning.
     private var scanDotColor: Color {
@@ -167,10 +171,17 @@ struct MenuContentView: View {
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 12)
+                        .onGeometryChange(for: CGFloat.self, of: \.size.height) { h in
+                            portsContentHeight = h
+                        }
                     }
-                    .scrollBounceBehavior(.basedOnSize)
+                    // `.fixedSize(vertical:)` lets the ScrollView take the content's intrinsic
+                    // height so the MenuBarExtra window grows/shrinks smoothly as rows expand.
+                    // Hiding the indicator when content fits inside 600pt prevents the scroll
+                    // bar from flashing briefly during the collapse animation (#20).
                     .frame(maxHeight: 600)
                     .fixedSize(horizontal: false, vertical: true)
+                    .scrollIndicators(portsContentHeight > 600 ? .automatic : .never)
                 }
             }
             // Kill report banner sits on TOP of the ports area as a floating overlay.
@@ -207,7 +218,7 @@ struct MenuContentView: View {
             .padding(.vertical, 6)
         }
         .animation(.easeInOut(duration: 0.25), value: monitor.lastKillReport?.message)
-        .animation(.easeInOut(duration: 0.25), value: monitor.pendingKillConfirmation?.pid)
+        .animation(.easeInOut(duration: 0.25), value: monitor.pendingKillConfirmation?.entry.pid)
     }
 
     // MARK: - Update banner
@@ -376,8 +387,8 @@ struct MenuContentView: View {
 
     @ViewBuilder
     private func portRow(_ display: PortEntryDisplay) -> some View {
-        let isPending = monitor.pendingKillConfirmation?.pid == display.entry.pid
-            && monitor.pendingKillConfirmation?.port == display.entry.port
+        let isPending = monitor.pendingKillConfirmation?.entry.pid == display.entry.pid
+            && monitor.pendingKillConfirmation?.entry.port == display.entry.port
         PortRowView(
             display: display,
             isKilling: monitor.killingPIDs.contains(display.entry.pid),
@@ -386,9 +397,9 @@ struct MenuContentView: View {
             settings: monitor.settings,
             onKill: {
                 if display.entry.projectName == "Other" {
-                    monitor.pendingKillConfirmation = display.entry
+                    monitor.pendingKillConfirmation = display
                 } else {
-                    Task { await monitor.killPort(display.entry) }
+                    Task { await monitor.killPort(display) }
                 }
             },
             onOpen: {
@@ -397,9 +408,9 @@ struct MenuContentView: View {
                 }
             },
             onConfirmKill: {
-                let e = display.entry
+                let d = display
                 monitor.pendingKillConfirmation = nil
-                Task { await monitor.killPort(e) }
+                Task { await monitor.killPort(d) }
             },
             onCancelKill: {
                 monitor.pendingKillConfirmation = nil

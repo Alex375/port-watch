@@ -66,6 +66,7 @@ final class PortEntryTests: XCTestCase {
     private func makeEntry(
         port: UInt16 = 8080,
         pid: Int32 = 1234,
+        ppid: Int32 = 0,
         processName: String = "node",
         processPath: String = "/usr/bin/node",
         commandLine: String = "node server.js",
@@ -83,6 +84,7 @@ final class PortEntryTests: XCTestCase {
             id: "\(port)-\(pid)-0",
             port: port,
             pid: pid,
+            ppid: ppid,
             processName: processName,
             processPath: processPath,
             commandLine: commandLine,
@@ -419,6 +421,7 @@ final class PortEntryDisplayTests: XCTestCase {
             id: "8080-1-0",
             port: 8080,
             pid: 1,
+            ppid: 0,
             processName: processName,
             processPath: "/usr/bin/node",
             commandLine: commandLine,
@@ -474,6 +477,7 @@ final class ProjectGroupTests: XCTestCase {
             id: "3000-1-0",
             port: 3000,
             pid: 1,
+            ppid: 0,
             processName: "node",
             processPath: "/usr/bin/node",
             commandLine: "node index.js",
@@ -497,14 +501,14 @@ final class ProjectGroupTests: XCTestCase {
 
     func testProjectGroupMultipleEntries() {
         let entry1 = PortEntry(
-            id: "3000-1-0", port: 3000, pid: 1,
+            id: "3000-1-0", port: 3000, pid: 1, ppid: 0,
             processName: "node", processPath: "", commandLine: "", cwd: "",
             tcpState: .listen, processStartTime: Date(),
             residentMemoryBytes: 0, totalCPUTimeNs: 0,
             projectName: "MyApp", worktreeName: nil, roleLabel: nil, roleIcon: nil
         )
         let entry2 = PortEntry(
-            id: "3001-2-0", port: 3001, pid: 2,
+            id: "3001-2-0", port: 3001, pid: 2, ppid: 0,
             processName: "python", processPath: "", commandLine: "", cwd: "",
             tcpState: .listen, processStartTime: Date(),
             residentMemoryBytes: 0, totalCPUTimeNs: 0,
@@ -1214,7 +1218,7 @@ final class PortEntryDisplayZombieTests: XCTestCase {
     private func makeEntry(tcpState: TCPState = .listen, projectName: String = "App") -> PortEntry {
         PortEntry(
             id: "8080-1-0",
-            port: 8080, pid: 1,
+            port: 8080, pid: 1, ppid: 0,
             processName: "node", processPath: "", commandLine: "", cwd: "",
             tcpState: tcpState,
             processStartTime: Date(),
@@ -1243,7 +1247,7 @@ final class FilterServerSocketsTests: XCTestCase {
     private func make(pid: Int32 = 1234, port: UInt16, state: TCPState, processName: String = "proc") -> PortEntry {
         PortEntry(
             id: "\(port)-\(pid)-\(UUID().uuidString.prefix(4))",
-            port: port, pid: pid,
+            port: port, pid: pid, ppid: 0,
             processName: processName, processPath: "", commandLine: "", cwd: "",
             tcpState: state,
             processStartTime: Date(),
@@ -1336,7 +1340,7 @@ final class FilterIgnoredProcessesTests: XCTestCase {
     private func make(pid: Int32 = 100, port: UInt16 = 3000, name: String) -> PortEntry {
         PortEntry(
             id: "\(port)-\(pid)",
-            port: port, pid: pid,
+            port: port, pid: pid, ppid: 0,
             processName: name, processPath: "", commandLine: "", cwd: "",
             tcpState: .listen,
             processStartTime: Date(),
@@ -1393,5 +1397,211 @@ final class FilterIgnoredProcessesTests: XCTestCase {
         ]
         let result = PortMonitor.filterIgnoredProcesses(entries, ignored: ["claude"])
         XCTAssertEqual(result.map(\.port), [3000, 5432, 8080])
+    }
+}
+
+// MARK: - Fleet collapsing Tests (from #17 — worker fleet detection)
+
+final class FleetCollapseTests: XCTestCase {
+
+    /// Build a PortEntryDisplay with the given pid/ppid on a port.
+    private func make(
+        pid: Int32,
+        ppid: Int32,
+        port: UInt16 = 8000,
+        name: String = "python",
+        cpuPercent: Double? = nil,
+        ramBytes: UInt64 = 0
+    ) -> PortEntryDisplay {
+        let entry = PortEntry(
+            id: "\(port)-\(pid)", port: port, pid: pid, ppid: ppid,
+            processName: name, processPath: "", commandLine: "", cwd: "",
+            tcpState: .listen, processStartTime: Date(),
+            residentMemoryBytes: ramBytes, totalCPUTimeNs: 0,
+            projectName: "api", worktreeName: nil,
+            roleLabel: nil, roleIcon: nil
+        )
+        return PortEntryDisplay(entry: entry, cpuPercent: cpuPercent, isZombie: false)
+    }
+
+    // MARK: partitionIntoFleets
+
+    func testPartitionSinglePIDReturnsSingleFleet() {
+        let result = PortMonitor.partitionIntoFleets([make(pid: 100, ppid: 1)])
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result.first?.count, 1)
+    }
+
+    func testPartitionParentChildFormOneFleet() {
+        // ppid of 101 points to pid 100 → same fleet.
+        let entries = [
+            make(pid: 100, ppid: 1),
+            make(pid: 101, ppid: 100),
+            make(pid: 102, ppid: 100),
+        ]
+        let result = PortMonitor.partitionIntoFleets(entries)
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result.first?.count, 3)
+    }
+
+    func testPartitionUnrelatedPIDsStaySeparate() {
+        // Two unrelated servers on the same port (real conflict).
+        let entries = [
+            make(pid: 100, ppid: 1),
+            make(pid: 200, ppid: 2),
+        ]
+        let result = PortMonitor.partitionIntoFleets(entries)
+        XCTAssertEqual(result.count, 2)
+    }
+
+    func testPartitionMultiLevelAncestryFormsOneFleet() {
+        // 102 → 101 → 100 : transitive ancestry, all within port entries.
+        let entries = [
+            make(pid: 100, ppid: 1),
+            make(pid: 101, ppid: 100),
+            make(pid: 102, ppid: 101),
+        ]
+        let result = PortMonitor.partitionIntoFleets(entries)
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result.first?.count, 3)
+    }
+
+    func testPartitionPpidZeroDoesNotLinkFleets() {
+        // ppid = 0 is a sentinel for "unavailable" and must never be used as a join key,
+        // otherwise all orphaned entries would collapse into a single mega-fleet.
+        let entries = [
+            make(pid: 100, ppid: 0),
+            make(pid: 200, ppid: 0),
+        ]
+        let result = PortMonitor.partitionIntoFleets(entries)
+        XCTAssertEqual(result.count, 2)
+    }
+
+    // MARK: mergeFleet
+
+    func testMergeFleetPicksMasterByAncestry() {
+        // Only pid 100's ppid is outside the fleet — it's the master.
+        let fleet = [
+            make(pid: 101, ppid: 100),
+            make(pid: 100, ppid: 1),
+            make(pid: 102, ppid: 100),
+        ]
+        let merged = PortMonitor.mergeFleet(fleet)
+        XCTAssertEqual(merged.entry.pid, 100)
+        XCTAssertEqual(merged.workerCount, 2)
+        XCTAssertEqual(Set(merged.workerPIDs), Set([101, 102]))
+    }
+
+    func testMergeFleetAggregatesCPU() {
+        let fleet = [
+            make(pid: 100, ppid: 1, cpuPercent: 2.0),
+            make(pid: 101, ppid: 100, cpuPercent: 1.5),
+            make(pid: 102, ppid: 100, cpuPercent: 0.5),
+        ]
+        let merged = PortMonitor.mergeFleet(fleet)
+        XCTAssertEqual(merged.cpuPercent ?? 0, 4.0, accuracy: 0.001)
+    }
+
+    func testMergeFleetAggregatesRAM() {
+        let fleet = [
+            make(pid: 100, ppid: 1, ramBytes: 100 * 1024 * 1024),   // 100 MB
+            make(pid: 101, ppid: 100, ramBytes: 50 * 1024 * 1024),  // 50 MB
+            make(pid: 102, ppid: 100, ramBytes: 50 * 1024 * 1024),  // 50 MB
+        ]
+        let merged = PortMonitor.mergeFleet(fleet)
+        XCTAssertEqual(merged.memoryMB, 200.0, accuracy: 0.001)
+    }
+
+    func testMergeFleetCPUNilWhenNoSamples() {
+        let fleet = [
+            make(pid: 100, ppid: 1, cpuPercent: nil),
+            make(pid: 101, ppid: 100, cpuPercent: nil),
+        ]
+        let merged = PortMonitor.mergeFleet(fleet)
+        XCTAssertNil(merged.cpuPercent)
+    }
+
+    // MARK: collapseFleets
+
+    func testCollapseFleetsPythonMultiprocessing() {
+        // Reproduces issue #17: python multiprocessing.spawn creates 4 workers sharing the
+        // listening socket inherited from the master. Should collapse into ONE display row
+        // with workerCount = 4.
+        let entries = [
+            make(pid: 1000, ppid: 1, port: 8000, cpuPercent: 1.0, ramBytes: 20 * 1024 * 1024),
+            make(pid: 1001, ppid: 1000, port: 8000, cpuPercent: 0.5, ramBytes: 15 * 1024 * 1024),
+            make(pid: 1002, ppid: 1000, port: 8000, cpuPercent: 0.5, ramBytes: 15 * 1024 * 1024),
+            make(pid: 1003, ppid: 1000, port: 8000, cpuPercent: 0.5, ramBytes: 15 * 1024 * 1024),
+            make(pid: 1004, ppid: 1000, port: 8000, cpuPercent: 0.5, ramBytes: 15 * 1024 * 1024),
+        ]
+        let result = PortMonitor.collapseFleets(entries)
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result.first?.entry.pid, 1000)
+        XCTAssertEqual(result.first?.workerCount, 4)
+        XCTAssertEqual(result.first?.cpuPercent ?? 0, 3.0, accuracy: 0.001)
+        XCTAssertEqual(result.first?.memoryMB ?? 0, 80.0, accuracy: 0.001)
+    }
+
+    func testCollapseFleetsPreservesRealConflicts() {
+        // Two unrelated processes on the same port must survive as a real conflict.
+        let entries = [
+            make(pid: 100, ppid: 1, port: 5000, name: "node"),
+            make(pid: 200, ppid: 2, port: 5000, name: "python"),
+        ]
+        let result = PortMonitor.collapseFleets(entries)
+        XCTAssertEqual(result.count, 2)
+    }
+
+    func testCollapseFleetsMixedCase() {
+        // Port A: isolated. Port B: fleet. Port C: real conflict.
+        let entries = [
+            make(pid: 10, ppid: 1, port: 3000, name: "node"),
+            make(pid: 100, ppid: 1, port: 8000, name: "python"),
+            make(pid: 101, ppid: 100, port: 8000, name: "python"),
+            make(pid: 102, ppid: 100, port: 8000, name: "python"),
+            make(pid: 200, ppid: 1, port: 9000, name: "ruby"),
+            make(pid: 201, ppid: 50, port: 9000, name: "go"),
+        ]
+        let result = PortMonitor.collapseFleets(entries)
+        // Expect 4 rows: 3000 (isolated), 8000 (fleet×1), 9000 (×2 unrelated).
+        XCTAssertEqual(result.count, 4)
+        let port8000 = result.filter { $0.entry.port == 8000 }
+        XCTAssertEqual(port8000.count, 1)
+        XCTAssertEqual(port8000.first?.workerCount, 2)
+        let port9000 = result.filter { $0.entry.port == 9000 }
+        XCTAssertEqual(port9000.count, 2)
+    }
+
+    func testCollapseFleetsResultSortedByPort() {
+        let entries = [
+            make(pid: 10, ppid: 1, port: 9000),
+            make(pid: 20, ppid: 1, port: 3000),
+            make(pid: 30, ppid: 1, port: 5000),
+        ]
+        let result = PortMonitor.collapseFleets(entries)
+        XCTAssertEqual(result.map { $0.entry.port }, [3000, 5000, 9000])
+    }
+
+    func testCollapseFleetsIsolatedProcessHasZeroWorkerCount() {
+        let entries = [make(pid: 100, ppid: 1)]
+        let result = PortMonitor.collapseFleets(entries)
+        XCTAssertEqual(result.first?.workerCount, 0)
+        XCTAssertTrue(result.first?.workerPIDs.isEmpty ?? false)
+    }
+
+    func testCollapseFleetsZombieStatePropagates() {
+        let master = make(pid: 100, ppid: 1)
+        let workerEntry = PortEntry(
+            id: "8000-101", port: 8000, pid: 101, ppid: 100,
+            processName: "python", processPath: "", commandLine: "", cwd: "",
+            tcpState: .listen, processStartTime: Date(),
+            residentMemoryBytes: 0, totalCPUTimeNs: 0,
+            projectName: "api", worktreeName: nil,
+            roleLabel: nil, roleIcon: nil
+        )
+        let worker = PortEntryDisplay(entry: workerEntry, cpuPercent: nil, isZombie: true)
+        let result = PortMonitor.collapseFleets([master, worker])
+        XCTAssertEqual(result.count, 1)
+        XCTAssertTrue(result.first?.isZombie ?? false)
     }
 }

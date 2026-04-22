@@ -372,6 +372,7 @@ enum PortScanner: Sendable {
                 } else {
                     startTime = Date()
                 }
+                let ppid = bsd.map { Int32($0.pbi_ppid) } ?? 0
 
                 let task = getTask()
                 let residentMem = task.map { UInt64($0.pti_resident_size) } ?? 0
@@ -405,6 +406,7 @@ enum PortScanner: Sendable {
                     id: "\(localPort)-\(pid)-\(fd.proc_fd)",
                     port: localPort,
                     pid: pid,
+                    ppid: ppid,
                     processName: name,
                     processPath: getPath(),
                     commandLine: cmd,
