@@ -123,12 +123,11 @@ final class PortMonitor {
 
         func find(_ x: Int32) -> Int32 {
             var node = x
-            while parent[node]! != node { node = parent[node]! }
+            while let p = parent[node], p != node { node = p }
             var cur = x
-            while parent[cur]! != node {
-                let next = parent[cur]!
+            while let p = parent[cur], p != node {
                 parent[cur] = node
-                cur = next
+                cur = p
             }
             return node
         }
@@ -147,12 +146,15 @@ final class PortMonitor {
     }
 
     /// Merge a fleet into a single display. Master = the entry whose `ppid` is NOT in the fleet
-    /// (i.e. whose parent lives outside this group, or is 0). Fallback: lowest PID.
+    /// (i.e. whose parent lives outside this group, or is 0). Ties are broken by lowest PID so
+    /// the same master is picked across consecutive scans, keeping the row's `id` stable
+    /// (otherwise `PortRowView.isExpanded` state would reset each refresh).
     nonisolated static func mergeFleet(_ fleet: [PortEntryDisplay]) -> PortEntryDisplay {
         precondition(!fleet.isEmpty)
         let pidSet = Set(fleet.map { $0.entry.pid })
-        let master = fleet.first { !pidSet.contains($0.entry.ppid) }
-            ?? fleet.min(by: { $0.entry.pid < $1.entry.pid })!
+        let sortedByPid = fleet.sorted { $0.entry.pid < $1.entry.pid }
+        let master = sortedByPid.first { !pidSet.contains($0.entry.ppid) }
+            ?? sortedByPid[0]
         let workers = fleet.filter { $0.entry.pid != master.entry.pid }
 
         let cpuSamples = fleet.compactMap(\.cpuPercent)

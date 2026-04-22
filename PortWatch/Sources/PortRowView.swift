@@ -27,7 +27,13 @@ struct PortRowView: View {
     @State private var isHovered = false
     @State private var isExpanded = false
 
-    private var cpuOver: Bool { (display.cpuPercent ?? 0) > settings.cpuThreshold }
+    /// For fleets, scale the CPU threshold by the number of processes so the warning
+    /// reflects abnormal per-process load rather than the raw sum (N workers × 100% each
+    /// would otherwise always trip a 50% threshold). Honest total is still shown in the pill.
+    private var cpuThresholdForRow: Double {
+        isFleet ? settings.cpuThreshold * Double(display.workerCount + 1) : settings.cpuThreshold
+    }
+    private var cpuOver: Bool { (display.cpuPercent ?? 0) > cpuThresholdForRow }
     private var ramOver: Bool { display.memoryMB > settings.ramThresholdMB }
     private var isFleet: Bool { display.workerCount > 0 }
     /// Persistent zombie flag from `PortMonitor` — only true after N consecutive CLOSE_WAIT scans (PR #11).
@@ -274,11 +280,17 @@ struct PortRowView: View {
             if isZombie {
                 warningPill(icon: "xmark.seal.fill", text: "ZOMBIE", color: .red)
             }
-            if let cpu = display.cpuPercent, cpu > settings.cpuThreshold {
+            if let cpu = display.cpuPercent, cpu > cpuThresholdForRow {
                 warningPill(icon: "cpu", text: String(format: "%.0f%% CPU", cpu), color: .orange)
+                    .help(isFleet
+                          ? "Total CPU across master + \(display.workerCount) workers"
+                          : "CPU usage")
             }
             if ramOver {
                 warningPill(icon: "memorychip", text: String(format: "%.0f MB", display.memoryMB), color: .orange)
+                    .help(isFleet
+                          ? "Total RAM across master + \(display.workerCount) workers"
+                          : "Resident memory")
             }
             Spacer()
         }
