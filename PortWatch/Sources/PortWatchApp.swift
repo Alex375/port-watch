@@ -175,12 +175,13 @@ struct MenuContentView: View {
                             portsContentHeight = h
                         }
                     }
-                    // When content fits inside 600pt we disable scrolling entirely and hide
-                    // the indicator — prevents the scroll bar flashing briefly during the
-                    // collapse animation (issue #20 second round).
-                    .scrollDisabled(portsContentHeight <= 600)
+                    // `.fixedSize(vertical:)` lets the ScrollView take the content's intrinsic
+                    // height so the MenuBarExtra window grows/shrinks smoothly as rows expand.
+                    // Hiding the indicator when content fits inside 600pt prevents the scroll
+                    // bar from flashing briefly during the collapse animation (#20).
+                    .frame(maxHeight: 600)
+                    .fixedSize(horizontal: false, vertical: true)
                     .scrollIndicators(portsContentHeight > 600 ? .automatic : .never)
-                    .frame(height: min(portsContentHeight, 600))
                 }
             }
             // Kill report banner sits on TOP of the ports area as a floating overlay.
