@@ -207,7 +207,7 @@ struct MenuContentView: View {
             .padding(.vertical, 6)
         }
         .animation(.easeInOut(duration: 0.25), value: monitor.lastKillReport?.message)
-        .animation(.easeInOut(duration: 0.25), value: monitor.pendingKillConfirmation?.pid)
+        .animation(.easeInOut(duration: 0.25), value: monitor.pendingKillConfirmation?.entry.pid)
     }
 
     // MARK: - Update banner
@@ -376,8 +376,8 @@ struct MenuContentView: View {
 
     @ViewBuilder
     private func portRow(_ display: PortEntryDisplay) -> some View {
-        let isPending = monitor.pendingKillConfirmation?.pid == display.entry.pid
-            && monitor.pendingKillConfirmation?.port == display.entry.port
+        let isPending = monitor.pendingKillConfirmation?.entry.pid == display.entry.pid
+            && monitor.pendingKillConfirmation?.entry.port == display.entry.port
         PortRowView(
             display: display,
             isKilling: monitor.killingPIDs.contains(display.entry.pid),
@@ -386,9 +386,9 @@ struct MenuContentView: View {
             settings: monitor.settings,
             onKill: {
                 if display.entry.projectName == "Other" {
-                    monitor.pendingKillConfirmation = display.entry
+                    monitor.pendingKillConfirmation = display
                 } else {
-                    Task { await monitor.killPort(display.entry) }
+                    Task { await monitor.killPort(display) }
                 }
             },
             onOpen: {
@@ -397,9 +397,9 @@ struct MenuContentView: View {
                 }
             },
             onConfirmKill: {
-                let e = display.entry
+                let d = display
                 monitor.pendingKillConfirmation = nil
-                Task { await monitor.killPort(e) }
+                Task { await monitor.killPort(d) }
             },
             onCancelKill: {
                 monitor.pendingKillConfirmation = nil

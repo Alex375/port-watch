@@ -28,7 +28,8 @@ struct PortRowView: View {
     @State private var isExpanded = false
 
     private var cpuOver: Bool { (display.cpuPercent ?? 0) > settings.cpuThreshold }
-    private var ramOver: Bool { display.entry.memoryMB > settings.ramThresholdMB }
+    private var ramOver: Bool { display.memoryMB > settings.ramThresholdMB }
+    private var isFleet: Bool { display.workerCount > 0 }
     /// Persistent zombie flag from `PortMonitor` — only true after N consecutive CLOSE_WAIT scans (PR #11).
     private var isZombie: Bool { display.isZombie }
     private var hasWarning: Bool { isZombie || cpuOver || ramOver || isConflict }
@@ -100,6 +101,11 @@ struct PortRowView: View {
             // Role badge (compact, centered with port)
             if let label = display.entry.roleLabel, let icon = display.entry.roleIcon {
                 roleBadge(icon: icon, label: label)
+            }
+
+            // Fleet pill — discrete, neutral. Means the row aggregates a master + N workers.
+            if isFleet {
+                fleetPill
             }
 
             // Worktree tag — discrete, neutral color
@@ -272,10 +278,26 @@ struct PortRowView: View {
                 warningPill(icon: "cpu", text: String(format: "%.0f%% CPU", cpu), color: .orange)
             }
             if ramOver {
-                warningPill(icon: "memorychip", text: String(format: "%.0f MB", display.entry.memoryMB), color: .orange)
+                warningPill(icon: "memorychip", text: String(format: "%.0f MB", display.memoryMB), color: .orange)
             }
             Spacer()
         }
+    }
+
+    // MARK: - Fleet pill
+
+    private var fleetPill: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "square.stack.3d.up.fill")
+                .font(.system(size: 8))
+            Text("×\(display.workerCount + 1)")
+                .font(.system(size: 9, weight: .semibold))
+        }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(Color.secondary.opacity(0.12), in: Capsule())
+        .help("Master + \(display.workerCount) worker process\(display.workerCount == 1 ? "" : "es") sharing this socket")
     }
 
     // MARK: - Reusable bits

@@ -48,7 +48,7 @@ final class PortMonitor {
     private var killReportDismissTask: Task<Void, Never>?
 
     /// Pending kill that requires confirmation (e.g. "Other" processes).
-    var pendingKillConfirmation: PortEntry? = nil
+    var pendingKillConfirmation: PortEntryDisplay? = nil
 
     /// PIDs currently being killed — drives the loading spinner in UI.
     var killingPIDs: Set<Int32> = []
@@ -82,6 +82,92 @@ final class PortMonitor {
         guard tcpState.isZombieCandidate else { return (0, false) }
         let streak = previousStreak + 1
         return (streak, streak >= threshold)
+    }
+
+    // MARK: - Worker fleet collapsing
+
+    /// Collapse worker fleets: on each port, if multiple PIDs share an ancestry relationship
+    /// (via `ppid`), they are merged into a single display representing the master, with
+    /// `workerCount`, `workerPIDs`, aggregated CPU/RAM, and zombie propagation.
+    ///
+    /// Motivation: Python `multiprocessing.spawn`, gunicorn, uvicorn, Node cluster, nginx, etc.
+    /// all fork a master that opens the listening socket; children inherit the FD. Prior to this
+    /// fix these were misreported as port conflicts (issue #17).
+    nonisolated static func collapseFleets(_ displays: [PortEntryDisplay]) -> [PortEntryDisplay] {
+        let byPort = Dictionary(grouping: displays) { $0.entry.port }
+        var result: [PortEntryDisplay] = []
+        for (_, entries) in byPort {
+            if entries.count == 1 {
+                result.append(entries[0])
+                continue
+            }
+            let fleets = partitionIntoFleets(entries)
+            for fleet in fleets {
+                if fleet.count == 1 {
+                    result.append(fleet[0])
+                } else {
+                    result.append(mergeFleet(fleet))
+                }
+            }
+        }
+        return result.sorted { $0.entry.port < $1.entry.port }
+    }
+
+    /// Partition entries on the same port into connected components based on `ppid` links.
+    /// Uses union-find: two entries are in the same fleet if one's `ppid` matches another's `pid`
+    /// (direct parent/child), transitively covering multi-level ancestry within the same port set.
+    nonisolated static func partitionIntoFleets(_ entries: [PortEntryDisplay]) -> [[PortEntryDisplay]] {
+        guard !entries.isEmpty else { return [] }
+        var parent: [Int32: Int32] = [:]
+        for e in entries { parent[e.entry.pid] = e.entry.pid }
+
+        func find(_ x: Int32) -> Int32 {
+            var node = x
+            while parent[node]! != node { node = parent[node]! }
+            var cur = x
+            while parent[cur]! != node {
+                let next = parent[cur]!
+                parent[cur] = node
+                cur = next
+            }
+            return node
+        }
+        func union(_ a: Int32, _ b: Int32) {
+            let ra = find(a), rb = find(b)
+            if ra != rb { parent[ra] = rb }
+        }
+
+        let pidSet = Set(entries.map { $0.entry.pid })
+        for e in entries where pidSet.contains(e.entry.ppid) && e.entry.ppid != 0 {
+            union(e.entry.pid, e.entry.ppid)
+        }
+
+        let groups = Dictionary(grouping: entries) { find($0.entry.pid) }
+        return Array(groups.values)
+    }
+
+    /// Merge a fleet into a single display. Master = the entry whose `ppid` is NOT in the fleet
+    /// (i.e. whose parent lives outside this group, or is 0). Fallback: lowest PID.
+    nonisolated static func mergeFleet(_ fleet: [PortEntryDisplay]) -> PortEntryDisplay {
+        precondition(!fleet.isEmpty)
+        let pidSet = Set(fleet.map { $0.entry.pid })
+        let master = fleet.first { !pidSet.contains($0.entry.ppid) }
+            ?? fleet.min(by: { $0.entry.pid < $1.entry.pid })!
+        let workers = fleet.filter { $0.entry.pid != master.entry.pid }
+
+        let cpuSamples = fleet.compactMap(\.cpuPercent)
+        let cpuPercent: Double? = cpuSamples.isEmpty ? nil : cpuSamples.reduce(0, +)
+        let totalRAM = fleet.reduce(UInt64(0)) { $0 + $1.entry.residentMemoryBytes }
+        let anyZombie = fleet.contains { $0.isZombie }
+
+        return PortEntryDisplay(
+            entry: master.entry,
+            cpuPercent: cpuPercent,
+            isZombie: anyZombie,
+            workerCount: workers.count,
+            workerPIDs: workers.map { $0.entry.pid },
+            aggregatedMemoryBytes: totalRAM
+        )
     }
 
     init() {
@@ -150,12 +236,18 @@ final class PortMonitor {
             displayEntries.append(PortEntryDisplay(entry: entry, cpuPercent: cpuPercent, isZombie: result.isZombie))
         }
 
-        // Detect port conflicts: multiple PIDs on the same port
-        var portPIDs: [UInt16: Set<Int32>] = [:]
-        for entry in rawEntries {
-            portPIDs[entry.port, default: []].insert(entry.pid)
+        // Collapse worker fleets (Python multiprocessing, gunicorn workers, nginx workers, …)
+        // into a single display row per family. Rows with unrelated PIDs on the same port
+        // survive as separate entries and are flagged as real conflicts below.
+        displayEntries = Self.collapseFleets(displayEntries)
+
+        // Detect port conflicts *after* collapse: a real conflict is multiple unrelated families
+        // on the same port (not a master + its workers).
+        var portCounts: [UInt16: Int] = [:]
+        for d in displayEntries {
+            portCounts[d.entry.port, default: 0] += 1
         }
-        let newConflicts = Set(portPIDs.filter { $0.value.count > 1 }.keys)
+        let newConflicts = Set(portCounts.filter { $0.value > 1 }.keys)
         self.conflictPorts = newConflicts
 
         // Notifications
@@ -211,35 +303,80 @@ final class PortMonitor {
 
     // MARK: - Kill
 
-    /// Kill a single process and report the result.
-    func killPort(_ entry: PortEntry) async {
+    /// Kill the process behind a port row. If the row is a worker fleet, master and all
+    /// workers are killed in parallel and the result is reported as a single aggregated message.
+    func killPort(_ display: PortEntryDisplay) async {
         setKillReport(nil)
-        killingPIDs.insert(entry.pid)
 
-        let result = await Task.detached(priority: .userInitiated) {
-            await PortScanner.killProcess(pid: entry.pid, port: entry.port, processName: entry.processName)
+        let master = display.entry
+        let workerPIDs = display.workerPIDs
+        let allPIDs = [master.pid] + workerPIDs
+        for pid in allPIDs { killingPIDs.insert(pid) }
+
+        // Kill master + workers in parallel.
+        let results = await Task.detached(priority: .userInitiated) {
+            await withTaskGroup(of: PortScanner.KillResult.self) { group in
+                group.addTask {
+                    await PortScanner.killProcess(pid: master.pid, port: master.port, processName: master.processName)
+                }
+                for wpid in workerPIDs {
+                    group.addTask {
+                        await PortScanner.killProcess(pid: wpid, port: master.port, processName: master.processName)
+                    }
+                }
+                var collected: [PortScanner.KillResult] = []
+                for await r in group { collected.append(r) }
+                return collected
+            }
         }.value
 
-        killingPIDs.remove(entry.pid)
+        for pid in allPIDs { killingPIDs.remove(pid) }
 
-        if result.success {
-            // Final verification: double-check the process is actually dead
-            if PortScanner.isAlive(pid: entry.pid) {
-                setKillReport(KillReport(
-                    message: "Kill of \(result.processName) on :\(result.port) (PID \(result.pid)) reported success but process is still alive",
-                    isError: true
-                ))
+        // Single-process fast path — keep the original message format.
+        if workerPIDs.isEmpty, let result = results.first {
+            if result.success {
+                if PortScanner.isAlive(pid: master.pid) {
+                    setKillReport(KillReport(
+                        message: "Kill of \(result.processName) on :\(result.port) (PID \(result.pid)) reported success but process is still alive",
+                        isError: true
+                    ))
+                } else {
+                    setKillReport(KillReport(
+                        message: "Killed \(result.processName) on :\(result.port) (PID \(result.pid))",
+                        isError: false
+                    ))
+                }
             } else {
                 setKillReport(KillReport(
-                    message: "Killed \(result.processName) on :\(result.port) (PID \(result.pid))",
-                    isError: false
+                    message: "Failed to kill \(result.processName) on :\(result.port) (PID \(result.pid)): \(result.error ?? "unknown error")",
+                    isError: true
                 ))
             }
+            await performScan()
+            return
+        }
+
+        // Fleet kill — aggregate report.
+        var successes = 0
+        var failures: [String] = []
+        for r in results {
+            if r.success {
+                if PortScanner.isAlive(pid: r.pid) {
+                    failures.append("PID \(r.pid) still alive after kill reported success")
+                } else {
+                    successes += 1
+                }
+            } else {
+                failures.append("PID \(r.pid) — \(r.error ?? "unknown error")")
+            }
+        }
+        let total = successes + failures.count
+        let label = "\(master.processName) on :\(master.port) (\(total) processes)"
+        if failures.isEmpty {
+            setKillReport(KillReport(message: "Killed \(label)", isError: false))
         } else {
-            setKillReport(KillReport(
-                message: "Failed to kill \(result.processName) on :\(result.port) (PID \(result.pid)): \(result.error ?? "unknown error")",
-                isError: true
-            ))
+            let msg = "Killed \(successes)/\(total) of \(label)\n" + failures.joined(separator: "\n")
+            setKillReport(KillReport(message: msg, isError: true))
         }
 
         await performScan()
