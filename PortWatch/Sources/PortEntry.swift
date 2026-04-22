@@ -43,6 +43,10 @@ struct PortEntry: Identifiable, Sendable {
     let id: String
     let port: UInt16
     let pid: Int32
+    /// Parent PID (from `proc_bsdinfo.pbi_ppid`). 0 if unavailable.
+    /// Used to detect worker fleets (e.g. Python multiprocessing, gunicorn, uvicorn) —
+    /// child processes that inherit the listening socket from a master via fork.
+    let ppid: Int32
     let processName: String
     let processPath: String
     let commandLine: String
@@ -139,13 +143,45 @@ struct CPUSample: Sendable {
 /// A PortEntry enriched with cross-scan computed data.
 struct PortEntryDisplay: Identifiable, Sendable {
     let entry: PortEntry
+    /// CPU usage — aggregated across master + workers when this is a fleet.
     let cpuPercent: Double?
 
     /// True when the socket has been stuck in `CLOSE_WAIT` long enough to be considered a real leak
     /// (the app forgot to call `close()`). Transient CLOSE_WAIT is normal during connection teardown.
     let isZombie: Bool
 
+    /// Number of worker processes collapsed into this display row. 0 for isolated processes.
+    let workerCount: Int
+
+    /// PIDs of the collapsed workers (not including the master). Used to kill the whole fleet.
+    let workerPIDs: [Int32]
+
+    /// Resident memory aggregated across master + workers. `nil` when this is not a fleet —
+    /// fall back to `entry.residentMemoryBytes`.
+    let aggregatedMemoryBytes: UInt64?
+
+    init(
+        entry: PortEntry,
+        cpuPercent: Double?,
+        isZombie: Bool,
+        workerCount: Int = 0,
+        workerPIDs: [Int32] = [],
+        aggregatedMemoryBytes: UInt64? = nil
+    ) {
+        self.entry = entry
+        self.cpuPercent = cpuPercent
+        self.isZombie = isZombie
+        self.workerCount = workerCount
+        self.workerPIDs = workerPIDs
+        self.aggregatedMemoryBytes = aggregatedMemoryBytes
+    }
+
     var id: String { entry.id }
+
+    /// Memory in MB — aggregated for fleets, single-process otherwise.
+    var memoryMB: Double {
+        Double(aggregatedMemoryBytes ?? entry.residentMemoryBytes) / (1024 * 1024)
+    }
 
     /// Human-readable command summary. Shows the command line if available, otherwise process name.
     var commandSummary: String {
