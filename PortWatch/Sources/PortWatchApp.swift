@@ -34,6 +34,10 @@ struct MenuContentView: View {
     @State private var isRefreshing = false
     @State private var updater = UpdateChecker.shared
     @State private var isOtherCollapsed = true
+    /// Measured height of the port list content. Drives the ScrollView's frame height explicitly,
+    /// so that expanding a row animates the container smoothly instead of oscillating between
+    /// "fits" and "scrolls" states (would trigger scroll-bar flicker — issue #20).
+    @State private var portsContentHeight: CGFloat = 0
 
     /// Scan indicator color: green when healthy, orange while scanning.
     private var scanDotColor: Color {
@@ -167,10 +171,17 @@ struct MenuContentView: View {
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 12)
+                        .onGeometryChange(for: CGFloat.self, of: \.size.height) { h in
+                            portsContentHeight = h
+                        }
                     }
-                    .scrollBounceBehavior(.basedOnSize)
+                    // `.fixedSize(vertical:)` lets the ScrollView take the content's intrinsic
+                    // height so the MenuBarExtra window grows/shrinks smoothly as rows expand.
+                    // Hiding the indicator when content fits inside 600pt prevents the scroll
+                    // bar from flashing briefly during the collapse animation (#20).
                     .frame(maxHeight: 600)
                     .fixedSize(horizontal: false, vertical: true)
+                    .scrollIndicators(portsContentHeight > 600 ? .automatic : .never)
                 }
             }
             // Kill report banner sits on TOP of the ports area as a floating overlay.
