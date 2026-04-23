@@ -70,6 +70,12 @@ final class AppSettings {
         didSet { UserDefaults.standard.set(ignoredProcesses, forKey: "ignoredProcesses") }
     }
 
+    /// How long a "recently stopped" snapshot is kept before being pruned.
+    /// 0 disables auto-prune (snapshots stay forever until cleared manually).
+    var snapshotTTLHours: Int {
+        didSet { UserDefaults.standard.set(snapshotTTLHours, forKey: "snapshotTTLHours") }
+    }
+
     private init() {
         let defaults = UserDefaults.standard
 
@@ -97,6 +103,7 @@ final class AppSettings {
             "mcpKeywords": defaultMCP,
             "claudeKeywords": defaultClaude,
             "ignoredProcesses": defaultIgnored,
+            "snapshotTTLHours": 168,
         ])
 
         self.cpuThreshold = defaults.double(forKey: "cpuThreshold")
@@ -111,6 +118,7 @@ final class AppSettings {
         self.mcpKeywords = defaults.stringArray(forKey: "mcpKeywords") ?? defaultMCP
         self.claudeKeywords = defaults.stringArray(forKey: "claudeKeywords") ?? defaultClaude
         self.ignoredProcesses = defaults.stringArray(forKey: "ignoredProcesses") ?? defaultIgnored
+        self.snapshotTTLHours = defaults.integer(forKey: "snapshotTTLHours")
     }
 
     func resetToDefaults() {
@@ -126,5 +134,6 @@ final class AppSettings {
         mcpKeywords = ["mcp-server", "mcp_server", "fastmcp", "modelcontextprotocol"]
         claudeKeywords = ["claude", "claude-code", "@anthropic-ai/claude-code", "anthropic-ai/claude"]
         ignoredProcesses = []
+        snapshotTTLHours = 168
     }
 }

@@ -50,6 +50,10 @@ struct PortEntry: Identifiable, Sendable {
     let processName: String
     let processPath: String
     let commandLine: String
+    /// Full argv captured from KERN_PROCARGS2, preserved for relaunch.
+    let arguments: [String]
+    /// Environment captured from KERN_PROCARGS2, preserved for relaunch.
+    let environment: [String: String]
     let cwd: String
     let tcpState: TCPState
     let processStartTime: Date
@@ -57,6 +61,11 @@ struct PortEntry: Identifiable, Sendable {
     let totalCPUTimeNs: UInt64
     let projectName: String
     let worktreeName: String?
+    /// Stable project identity used as the key in `SnapshotStore`. See `ProjectDetector.ProjectInfo.key`.
+    let projectKey: String
+    /// Non-nil when this port is backed by a running docker container — relaunch goes
+    /// through `docker start/stop` instead of SIGTERM on the daemon process.
+    let dockerContainerID: String?
 
     var uptime: TimeInterval {
         Date().timeIntervalSince(processStartTime)
@@ -97,6 +106,25 @@ struct PortEntry: Identifiable, Sendable {
 
     /// SF Symbol for the role.
     let roleIcon: String?
+
+    /// Build a `LaunchSnapshot` from this entry — used at kill-time to remember how to
+    /// relaunch the process later.
+    func toSnapshot(containerID: String? = nil) -> LaunchSnapshot {
+        LaunchSnapshot(
+            projectKey: projectKey,
+            projectName: projectName,
+            port: port,
+            processName: processName,
+            roleLabel: roleLabel,
+            roleIcon: roleIcon,
+            cwd: cwd,
+            executablePath: processPath,
+            arguments: arguments,
+            environment: environment,
+            capturedAt: Date(),
+            dockerContainerID: containerID ?? dockerContainerID
+        )
+    }
 
     /// Compute role from keywords. Called at scan time with settings values.
     static func detectRole(

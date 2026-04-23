@@ -57,6 +57,16 @@ final class PortMonitor {
     var conflictPorts: Set<UInt16> = []
 
     let settings = AppSettings.shared
+    let snapshotStore = SnapshotStore.shared
+
+    /// PIDs / snapshot ids currently being launched — drives the spinner in the
+    /// "Recently stopped" section rows.
+    var launchingSnapshotIDs: Set<String> = []
+
+    /// Groups of recently-killed processes that can be relaunched, sorted most-recent-first.
+    var stoppedGroups: [StoppedProjectGroup] {
+        snapshotStore.groupedByProject()
+    }
 
     private var previousSamples: [Int32: CPUSample] = [:]
     private var knownPorts: Set<UInt16> = []
@@ -304,27 +314,60 @@ final class PortMonitor {
         }
     }
 
-    // MARK: - Kill
+    // MARK: - Stop (kill + snapshot)
 
-    /// Kill the process behind a port row. If the row is a worker fleet, master and all
-    /// workers are killed in parallel and the result is reported as a single aggregated message.
-    func killPort(_ display: PortEntryDisplay) async {
+    /// Route a shutdown through `docker stop` if a container id is provided, otherwise
+    /// fall through to the SIGTERM → SIGKILL sequence. `nonisolated` so it can run in a
+    /// detached task. Preserves the `KillResult` shape so the existing report-building
+    /// code downstream stays untouched.
+    nonisolated static func shutdownOne(
+        pid: Int32, port: UInt16, processName: String, dockerContainerID: String?
+    ) async -> PortScanner.KillResult {
+        if let id = dockerContainerID, !id.isEmpty {
+            let r = await ProcessLauncher.stopDockerContainer(id: id, processName: processName)
+            return PortScanner.KillResult(
+                pid: pid, port: port, processName: processName,
+                success: r.success, error: r.error
+            )
+        }
+        return await PortScanner.killProcess(pid: pid, port: port, processName: processName)
+    }
+
+    /// Stop the process behind a port row — captures a restart snapshot first, then kills.
+    /// If the row is a worker fleet, master + workers are killed in parallel and aggregated
+    /// in a single banner message. Docker-backed rows route through `docker stop` instead.
+    func stopPort(_ display: PortEntryDisplay) async {
         setKillReport(nil)
 
         let master = display.entry
-        let workerPIDs = display.workerPIDs
+        // Snapshot BEFORE the kill so the state is preserved even if the kill fails partway.
+        snapshotStore.save(master.toSnapshot())
+
+        // Worker PIDs are only relevant for native fleets — for docker, the daemon process
+        // owns the port and `docker stop` is a single operation.
+        let containerID = master.dockerContainerID
+        let workerPIDs = (containerID?.isEmpty == false) ? [] : display.workerPIDs
         let allPIDs = [master.pid] + workerPIDs
         for pid in allPIDs { killingPIDs.insert(pid) }
 
-        // Kill master + workers in parallel.
+        let masterPid = master.pid
+        let masterPort = master.port
+        let masterName = master.processName
+
         let results = await Task.detached(priority: .userInitiated) {
             await withTaskGroup(of: PortScanner.KillResult.self) { group in
                 group.addTask {
-                    await PortScanner.killProcess(pid: master.pid, port: master.port, processName: master.processName)
+                    await Self.shutdownOne(
+                        pid: masterPid, port: masterPort,
+                        processName: masterName, dockerContainerID: containerID
+                    )
                 }
                 for wpid in workerPIDs {
                     group.addTask {
-                        await PortScanner.killProcess(pid: wpid, port: master.port, processName: master.processName)
+                        await Self.shutdownOne(
+                            pid: wpid, port: masterPort,
+                            processName: masterName, dockerContainerID: nil
+                        )
                     }
                 }
                 var collected: [PortScanner.KillResult] = []
@@ -335,23 +378,27 @@ final class PortMonitor {
 
         for pid in allPIDs { killingPIDs.remove(pid) }
 
-        // Single-process fast path — keep the original message format.
+        // Single-process / single-container fast path. Docker stops skip the `isAlive` check
+        // because the daemon process stays up even after the container stops — the port
+        // going away is what confirms success (picked up on the next scan).
+        let isDocker = containerID?.isEmpty == false
         if workerPIDs.isEmpty, let result = results.first {
+            let verb = isDocker ? "Stopped container" : "Killed"
+            let subject = "\(result.processName) on :\(result.port)"
             if result.success {
-                if PortScanner.isAlive(pid: master.pid) {
+                if !isDocker && PortScanner.isAlive(pid: master.pid) {
                     setKillReport(KillReport(
-                        message: "Kill of \(result.processName) on :\(result.port) (PID \(result.pid)) reported success but process is still alive",
+                        message: "Kill of \(subject) (PID \(result.pid)) reported success but process is still alive",
                         isError: true
                     ))
                 } else {
-                    setKillReport(KillReport(
-                        message: "Killed \(result.processName) on :\(result.port) (PID \(result.pid))",
-                        isError: false
-                    ))
+                    let suffix = isDocker ? "" : " (PID \(result.pid))"
+                    setKillReport(KillReport(message: "\(verb) \(subject)\(suffix)", isError: false))
                 }
             } else {
+                let action = isDocker ? "stop container" : "kill"
                 setKillReport(KillReport(
-                    message: "Failed to kill \(result.processName) on :\(result.port) (PID \(result.pid)): \(result.error ?? "unknown error")",
+                    message: "Failed to \(action) \(subject) (PID \(result.pid)): \(result.error ?? "unknown error")",
                     isError: true
                 ))
             }
@@ -385,39 +432,58 @@ final class PortMonitor {
         await performScan()
     }
 
-    /// Kill all processes in a project group in parallel and report results.
-    func killProject(_ group: ProjectGroup) async {
+    /// Stop all processes in a project group — one snapshot is saved per (port, process)
+    /// before shutdown, so the whole project can be relaunched as a unit afterwards.
+    func stopProject(_ group: ProjectGroup) async {
         setKillReport(nil)
 
-        // Deduplicate by PID (multiple ports can belong to same process)
-        var uniqueEntries: [PortEntry] = []
-        var seenPIDs = Set<Int32>()
+        // One snapshot per row. Multiple ports on the same PID produce multiple snapshots,
+        // which is what we want — each port is independently relaunchable.
         for display in group.entries {
-            guard seenPIDs.insert(display.entry.pid).inserted else { continue }
-            uniqueEntries.append(display.entry)
-            killingPIDs.insert(display.entry.pid)
+            snapshotStore.save(display.entry.toSnapshot())
         }
 
-        // Kill all in parallel
+        // Deduplicate by (pid, containerID) — a single PID listening on multiple ports
+        // only needs one shutdown. A docker-backed row is tracked separately so we route
+        // through `docker stop` for each unique container.
+        struct ShutdownTarget {
+            let pid: Int32
+            let port: UInt16
+            let processName: String
+            let containerID: String?
+        }
+        var targets: [ShutdownTarget] = []
+        var seenPIDs = Set<Int32>()
+        var seenContainerIDs = Set<String>()
+        for display in group.entries {
+            let entry = display.entry
+            if let cid = entry.dockerContainerID, !cid.isEmpty {
+                guard seenContainerIDs.insert(cid).inserted else { continue }
+                targets.append(ShutdownTarget(pid: entry.pid, port: entry.port, processName: entry.processName, containerID: cid))
+            } else {
+                guard seenPIDs.insert(entry.pid).inserted else { continue }
+                targets.append(ShutdownTarget(pid: entry.pid, port: entry.port, processName: entry.processName, containerID: nil))
+            }
+            killingPIDs.insert(entry.pid)
+        }
+
         let results = await withTaskGroup(of: PortScanner.KillResult.self) { taskGroup in
-            for entry in uniqueEntries {
+            for target in targets {
                 taskGroup.addTask {
-                    await PortScanner.killProcess(pid: entry.pid, port: entry.port, processName: entry.processName)
+                    await Self.shutdownOne(
+                        pid: target.pid, port: target.port,
+                        processName: target.processName,
+                        dockerContainerID: target.containerID
+                    )
                 }
             }
             var collected: [PortScanner.KillResult] = []
-            for await result in taskGroup {
-                collected.append(result)
-            }
+            for await result in taskGroup { collected.append(result) }
             return collected
         }
 
-        // Clear all killing indicators
-        for entry in uniqueEntries {
-            killingPIDs.remove(entry.pid)
-        }
+        for target in targets { killingPIDs.remove(target.pid) }
 
-        // Tally results
         var successes = 0
         var failures: [String] = []
         for result in results {
@@ -428,9 +494,10 @@ final class PortMonitor {
             }
         }
 
-        // Final verification: re-check each PID that was reported as killed
+        // Final verification for native kills — `docker stop` already blocks until done,
+        // so we only re-check PIDs that went through the kill() path.
         var zombieWarnings: [String] = []
-        for result in results where result.success {
+        for (target, result) in zip(targets, results) where result.success && target.containerID == nil {
             if PortScanner.isAlive(pid: result.pid) {
                 zombieWarnings.append(":\(result.port) \(result.processName) (PID \(result.pid)) still alive after kill reported success")
             }
@@ -439,17 +506,122 @@ final class PortMonitor {
         let total = successes + failures.count
         if failures.isEmpty && zombieWarnings.isEmpty {
             setKillReport(KillReport(
-                message: "\(group.projectName): \(successes) process\(successes == 1 ? "" : "es") killed",
+                message: "\(group.projectName): \(successes) process\(successes == 1 ? "" : "es") stopped",
                 isError: false
             ))
         } else if !failures.isEmpty {
-            let msg = "\(group.projectName): \(successes)/\(total) killed, \(failures.count) failed\n" + failures.joined(separator: "\n")
+            let msg = "\(group.projectName): \(successes)/\(total) stopped, \(failures.count) failed\n" + failures.joined(separator: "\n")
             setKillReport(KillReport(message: msg, isError: true))
         } else {
-            let msg = "\(group.projectName): kills reported success but verification failed\n" + zombieWarnings.joined(separator: "\n")
+            let msg = "\(group.projectName): stops reported success but verification failed\n" + zombieWarnings.joined(separator: "\n")
             setKillReport(KillReport(message: msg, isError: true))
         }
 
         await performScan()
+    }
+
+    // MARK: - Start (relaunch from snapshot)
+
+    /// Relaunch a single snapshot. Waits briefly, rescans, and removes the snapshot from
+    /// the "Recently stopped" section if the port reappears. Otherwise keeps it so the
+    /// user can retry.
+    func startSnapshot(_ snapshot: LaunchSnapshot) async {
+        guard !launchingSnapshotIDs.contains(snapshot.id) else { return }
+        launchingSnapshotIDs.insert(snapshot.id)
+        setKillReport(nil)
+
+        let result = await ProcessLauncher.relaunch(snapshot)
+        // Give the service a moment to bind its port before we rescan.
+        try? await Task.sleep(for: .seconds(1))
+        await performScan()
+        launchingSnapshotIDs.remove(snapshot.id)
+
+        if result.success {
+            let reappeared = entries.contains {
+                $0.entry.port == snapshot.port && $0.entry.projectKey == snapshot.projectKey
+            }
+            if reappeared {
+                snapshotStore.remove(id: snapshot.id)
+                setKillReport(KillReport(
+                    message: "Launched \(snapshot.processName) on :\(snapshot.port)",
+                    isError: false
+                ))
+            } else {
+                setKillReport(KillReport(
+                    message: "Launched \(snapshot.processName) but :\(snapshot.port) is not listening yet",
+                    isError: false
+                ))
+            }
+        } else {
+            setKillReport(KillReport(
+                message: "Failed to launch \(snapshot.processName) on :\(snapshot.port): \(result.error ?? "unknown error")",
+                isError: true
+            ))
+        }
+    }
+
+    /// Relaunch every snapshot for a project, sequentially by role (DB → Cache → Back →
+    /// MCP → Front → Other) so that downstream services see their dependencies already
+    /// bound. Processes within the same role bucket run in parallel.
+    func startProject(projectKey: String) async {
+        let allSnapshots = snapshotStore.all(for: projectKey)
+        guard !allSnapshots.isEmpty else { return }
+        setKillReport(nil)
+        let projectName = allSnapshots.first?.projectName ?? projectKey
+
+        let buckets = Dictionary(grouping: allSnapshots) { RelaunchRole.from(roleLabel: $0.roleLabel) }
+        let sortedRoles = buckets.keys.sorted { $0.rawValue < $1.rawValue }
+
+        var successes = 0
+        var failures: [String] = []
+
+        for (index, role) in sortedRoles.enumerated() {
+            guard let bucket = buckets[role], !bucket.isEmpty else { continue }
+            for snap in bucket { launchingSnapshotIDs.insert(snap.id) }
+
+            let results = await withTaskGroup(of: (LaunchSnapshot, ProcessLauncher.LaunchResult).self) { taskGroup in
+                for snap in bucket {
+                    taskGroup.addTask { (snap, await ProcessLauncher.relaunch(snap)) }
+                }
+                var out: [(LaunchSnapshot, ProcessLauncher.LaunchResult)] = []
+                for await r in taskGroup { out.append(r) }
+                return out
+            }
+
+            for snap in bucket { launchingSnapshotIDs.remove(snap.id) }
+
+            for (snap, r) in results {
+                if r.success {
+                    successes += 1
+                } else {
+                    failures.append(":\(snap.port) \(snap.processName) — \(r.error ?? "unknown error")")
+                }
+            }
+
+            // Only pause between role buckets, not after the last one.
+            if index < sortedRoles.count - 1 {
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+        }
+
+        // Wait for the longest-starting service to bind, then rescan and prune snapshots
+        // whose ports are now listening under this project.
+        try? await Task.sleep(for: .seconds(1))
+        await performScan()
+        let runningPorts = Set(entries.filter { $0.entry.projectKey == projectKey }.map { $0.entry.port })
+        for snap in allSnapshots where runningPorts.contains(snap.port) {
+            snapshotStore.remove(id: snap.id)
+        }
+
+        let total = successes + failures.count
+        if failures.isEmpty {
+            setKillReport(KillReport(
+                message: "\(projectName): launched \(successes) process\(successes == 1 ? "" : "es")",
+                isError: false
+            ))
+        } else {
+            let msg = "\(projectName): launched \(successes)/\(total), \(failures.count) failed\n" + failures.joined(separator: "\n")
+            setKillReport(KillReport(message: msg, isError: true))
+        }
     }
 }

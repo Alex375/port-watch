@@ -6,7 +6,9 @@ struct SettingsView: View {
     @Bindable var settings: AppSettings
     var onClose: () -> Void
     @State private var showUninstallConfirm = false
+    @State private var showClearSnapshotsConfirm = false
     @State private var updater = UpdateChecker.shared
+    @State private var snapshotStore = SnapshotStore.shared
     @State private var newKeyword: [String: String] = [:]
 
     var body: some View {
@@ -18,6 +20,7 @@ struct SettingsView: View {
                     notificationsSection
                     detectionSection
                     ignoredProcessesSection
+                    restartHistorySection
                     aboutSection
                     dangerZone
                 }
@@ -150,6 +153,76 @@ struct SettingsView: View {
                 hint: "process name (e.g. claude)"
             )
         }
+    }
+
+    // MARK: - Restart history (TTL + clear)
+
+    private var restartHistorySection: some View {
+        settingsSection(icon: "clock.arrow.circlepath", title: "Restart history", color: .green) {
+            Text("Stopped processes are remembered so you can relaunch them later. Snapshots older than the retention window are discarded automatically.")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            sliderRow(
+                label: "Keep for",
+                value: Binding(
+                    get: { Double(settings.snapshotTTLHours) },
+                    set: { settings.snapshotTTLHours = Int($0) }
+                ),
+                range: 1...720,
+                step: 1,
+                format: formatTTL,
+                valueWidth: 58
+            )
+
+            let count = snapshotStore.snapshots.count
+            HStack(spacing: 6) {
+                Text("\(count) snapshot\(count == 1 ? "" : "s") stored")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if showClearSnapshotsConfirm {
+                    Button("Cancel") { showClearSnapshotsConfirm = false }
+                        .buttonStyle(.borderless)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Button {
+                        snapshotStore.clearAll()
+                        showClearSnapshotsConfirm = false
+                    } label: {
+                        Text("Clear all")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .controlSize(.small)
+                    .disabled(count == 0)
+                } else {
+                    Button {
+                        showClearSnapshotsConfirm = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "trash")
+                                .font(.system(size: 9))
+                            Text("Clear all")
+                                .font(.system(size: 11))
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(count == 0)
+                }
+            }
+        }
+    }
+
+    /// Convert TTL hours into a compact human-readable label: "1h", "23h", "1d", "7d", "30d".
+    private func formatTTL(_ hours: Double) -> String {
+        let h = Int(hours)
+        if h < 24 { return "\(h)h" }
+        let days = h / 24
+        let rem = h % 24
+        return rem == 0 ? "\(days)d" : "\(days)d\(rem)h"
     }
 
     // MARK: - About

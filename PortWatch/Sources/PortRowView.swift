@@ -180,12 +180,12 @@ struct PortRowView: View {
                     .frame(width: 14, height: 14)
             } else {
                 Button(action: onKill) {
-                    Image(systemName: "xmark.circle.fill")
+                    Image(systemName: "power.circle.fill")
                         .font(.system(size: 14))
                         .foregroundStyle(.red)
                 }
                 .buttonStyle(.borderless)
-                .help("Kill process \(display.entry.processName) (PID \(display.entry.pid))")
+                .help("Stop \(display.entry.processName) (PID \(display.entry.pid)) — snapshot saved for restart")
             }
         }
     }

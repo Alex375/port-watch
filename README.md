@@ -92,11 +92,22 @@ Each process is tagged with a role based on **configurable keyword matching** ag
 
 ### Process Management
 
-- **Kill individual process** — `SIGTERM` → 4s polling → `SIGKILL` → 2s polling → verified dead
-- **Kill entire project** — kills all processes in a group in parallel with per-process verification and detailed report
+- **Stop individual process** — a single power toggle on every row. `SIGTERM` → 4s polling → `SIGKILL` → 2s polling → verified dead. Docker-backed rows route through `docker stop <id>` so volumes and network stay intact.
+- **Stop entire project** — power toggle in the project header stops every process in the group in parallel, with per-process verification and a detailed report.
 - **Safety confirmation** required for *Other* (unidentified) processes
 - **Open in browser** — one click to open `http://localhost:PORT`
 - **Zero silent errors** — every failure surfaces a `KillReport` with PID, port, process name and system error message
+
+### Restart ("Recently stopped")
+
+Every time you stop a process from PortWatch, its invocation (executable, argv, environment, cwd, and Docker container id when applicable) is captured and saved so you can relaunch it later with a single click.
+
+- **Recently stopped section** — appears below running ports and lists every saved snapshot grouped by project. Shows the command that will be replayed and how long ago it was captured.
+- **Per-port restart** — click the green `▶` on a snapshot to relaunch it. PortWatch waits for the port to bind and clears the snapshot from the list once it's listening again.
+- **Per-project restart** — click the project header's `▶` to relaunch every snapshot in that project sequentially by role: **DB → Cache → Back → MCP → Front**, so downstream services see their dependencies already bound (500 ms pause between roles).
+- **Docker containers** — stop/restart goes through `docker stop <id>` / `docker start <id>`, preserving volumes and network configuration.
+- **Retention** — snapshots are kept for **7 days** by default (configurable in Settings, 1h – 30d). A "Clear all" button wipes them on demand.
+- **Caveats** — only processes stopped *from PortWatch* are snapshotted; a process killed from your terminal won't appear in Recently stopped. Relaunching spawns the binary directly (no shell wrapper), so tooling that only lives in shell init (nvm/pyenv shims) must already be resolved in the captured environment.
 
 ### Monitoring & Alerts
 
@@ -149,6 +160,7 @@ Inline, no separate window. Everything persists to `UserDefaults`.
 - Notification preferences (per category, 3 levels)
 - Role detection keywords (editable tag chips)
 - **Ignored processes** list (editable tag chips)
+- **Restart history retention** (1 h – 30 d) + Clear all snapshots
 - Version info + **one-click update checker**
 - Reset to defaults / Uninstall
 

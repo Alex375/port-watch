@@ -28,15 +28,19 @@ The app is unsigned (no Apple Developer certificate). First launch requires: rig
 
 | File | Role |
 |---|---|
-| `PortWatch/Sources/PortWatchApp.swift` | App entry point (`@main`), `MenuBarExtra` scene with `.window` style, `MenuContentView` (full UI: header, grouped port list, kill confirmation banner, kill report banner, settings toggle, footer) |
-| `PortWatch/Sources/PortEntry.swift` | Data models: `TCPState` enum (maps TSI_S_* constants), `PortEntry` struct (one open port), `CPUSample`, `PortEntryDisplay` (enriched with cross-scan CPU %), `ProjectGroup`, `KillReport`. Also contains `PortEntry.detectRole()` static method for role classification. |
-| `PortWatch/Sources/PortScanner.swift` | Low-level stateless scanner (`enum PortScanner`). Wraps libproc APIs for PID enumeration, FD listing, socket info extraction, process name/path/cwd/cmdline retrieval, BSD info, task info. Contains `scanAllPorts()` (full scan with per-PID caching and dedup) and `killProcess()` (SIGTERM/SIGKILL sequence). |
-| `PortWatch/Sources/PortMonitor.swift` | `@MainActor @Observable` class driving the UI. Owns the scan loop (configurable interval), computes CPU % from consecutive samples, detects port conflicts, triggers notifications, and exposes `killPort()`/`killProject()` with full result reporting. |
-| `PortWatch/Sources/ProjectDetector.swift` | Stateless `enum ProjectDetector`. Priority: Docker containers (via `docker ps --format json`) > git root (walk up to `.git`, use folder name) > known port fallback (PostgreSQL, MySQL, Redis, MongoDB, Elasticsearch) > "Other". |
+| `PortWatch/Sources/PortWatchApp.swift` | App entry point (`@main`), `MenuBarExtra` scene with `.window` style, `MenuContentView` (full UI: header, grouped port list, **Recently stopped section**, kill confirmation banner, kill/launch report banner, settings toggle, footer). Also defines `StoppedRowStyle` and `HoverButton`/`FooterButton` helpers. |
+| `PortWatch/Sources/PortRowView.swift` | SwiftUI card for a single running port row — hero port number, role badge, fleet pill, hover-revealed actions (globe + power toggle), expandable command line, warning pills. The red power icon (`power.circle.fill`) is the stop toggle. |
+| `PortWatch/Sources/PortEntry.swift` | Data models: `TCPState` enum (maps TSI_S_* constants), `PortEntry` struct (one open port, now including `arguments`, `environment`, `projectKey`, `dockerContainerID`), `CPUSample`, `PortEntryDisplay` (enriched with cross-scan CPU %), `ProjectGroup`, `KillReport`. Also contains `PortEntry.detectRole()` and `PortEntry.toSnapshot()`. |
+| `PortWatch/Sources/LaunchSnapshot.swift` | `LaunchSnapshot` struct (`Codable, Sendable`) capturing everything needed to relaunch a killed process: cwd, executable path, full argv, full environment, role, port, and optional docker container id. Also defines `RelaunchRole` (DB < Cache < Back < MCP < Front < Other) and `StoppedProjectGroup`. |
+| `PortWatch/Sources/SnapshotStore.swift` | `@MainActor @Observable` singleton that persists `[id: LaunchSnapshot]` in UserDefaults (JSON, ISO8601 dates). Prunes snapshots older than `AppSettings.snapshotTTLHours` on init and after every save. Exposes `save`, `remove(id:)`, `remove(projectKey:)`, `all(for:)`, `groupedByProject()`, `prune(olderThan:)`, `clearAll()`. |
+| `PortWatch/Sources/ProcessLauncher.swift` | Stateless `enum ProcessLauncher`. `relaunch(_ snapshot)` dispatches to `docker start <id>` when `dockerContainerID != nil`, otherwise spawns `Process(executable, args.dropFirst(), cwd, environment)` with stdio detached to `/dev/null` and a new process group (`setpgid`) so the child survives PortWatch quitting. Also exposes `stopDockerContainer` used by `PortMonitor.stopPort` for container-backed rows. |
+| `PortWatch/Sources/PortScanner.swift` | Low-level stateless scanner (`enum PortScanner`). Wraps libproc APIs. `processArgs(pid:)` parses `KERN_PROCARGS2` into `ProcessArgs(argv, environment, summary)` — previously returned only the summary string. `scanAllPorts()` fills `PortEntry.arguments`/`environment`/`projectKey`/`dockerContainerID`. Still exposes `killProcess()` (SIGTERM/SIGKILL) for native kills; docker kills go through `ProcessLauncher`. |
+| `PortWatch/Sources/PortMonitor.swift` | `@MainActor @Observable` class driving the UI. Owns the scan loop, computes CPU %, detects conflicts, triggers notifications. Stop flow: `stopPort()` / `stopProject()` save snapshots *before* killing, route Docker rows through `docker stop`, aggregate results via `shutdownOne()` (nonisolated static helper). Start flow: `startSnapshot()` relaunches one snapshot and waits for its port to rebind; `startProject(projectKey:)` walks roles in priority order, parallel within a role, with a 500 ms pause between roles. Exposes `stoppedGroups` derived from `SnapshotStore`. |
+| `PortWatch/Sources/ProjectDetector.swift` | Stateless `enum ProjectDetector`. Priority: Docker containers > git root > known port > "Other". Returns `ProjectInfo(name, worktreeName, key)` — `key` is a stable identifier (`docker:<id>` / absolute git-root path / `known:<name>` / `other:<processName>`) used by `SnapshotStore` so snapshots survive across app restarts and disambiguate same-named projects. Also exposes `dockerContainerID(forPort:)`. |
 | `PortWatch/Sources/NotificationManager.swift` | `@MainActor` singleton wrapping `UNUserNotificationCenter`. Sends notifications for new port detection and port conflicts. |
-| `PortWatch/Sources/AppSettings.swift` | `@MainActor @Observable` singleton persisted via `UserDefaults`. Stores thresholds (CPU, RAM), refresh interval, notification toggles, and configurable role detection keywords. |
-| `PortWatch/Sources/SettingsView.swift` | SwiftUI settings panel (inline, replaces main content). Sliders for thresholds/refresh, notification toggles, editable keyword tags (with `FlowLayout`), reset to defaults, and uninstall with confirmation. |
-| `PortWatchTests/PortWatchTests.swift` | 81 unit tests (TCPState, PortEntry, PortScanner, ProjectDetector, AppSettings, models). |
+| `PortWatch/Sources/AppSettings.swift` | `@MainActor @Observable` singleton persisted via `UserDefaults`. Stores thresholds (CPU, RAM), refresh interval, notification toggles, role detection keywords, ignored processes, and `snapshotTTLHours` (default 168 h = 7 d). |
+| `PortWatch/Sources/SettingsView.swift` | SwiftUI settings panel. Sections: Monitoring, Notifications, Role detection, Ignored processes, **Restart history** (TTL slider + snapshot count + Clear all), About, Danger zone. |
+| `PortWatchTests/PortWatchTests.swift` | Unit tests (TCPState, PortEntry, PortScanner, ProjectDetector, AppSettings, models, fleet collapsing, `LaunchSnapshot` round-trip, `SnapshotStore` save/prune/grouping, `PortScanner.parseProcArgsBuffer`, `ProcessLauncher` docker command builder, `PortEntry.toSnapshot`). |
 | `PortWatch/Sources/UpdateChecker.swift` | `@MainActor @Observable` singleton. Checks GitHub Releases API for new versions, downloads and replaces .app via helper shell script. |
 | `uninstall.sh` | Standalone shell uninstaller (kills process, removes .app, prefs, caches, logs). |
 | `PortWatch/Info.plist` | Bundle config. `LSUIElement = true` (no dock icon). |
@@ -88,17 +92,23 @@ Default keywords:
 - **MCP:** mcp-server, mcp_server, fastmcp, modelcontextprotocol (matches process name and command line)
 - **Claude:** claude, claude-code, @anthropic-ai/claude-code, anthropic-ai/claude (matches process name and command line only — not folder, to avoid false positives on project folders named "claude-notes" etc.). Checked before MCP so the Claude CLI itself is tagged "Claude" even when it spawns MCP child processes.
 
-### Kill Sequence
+### Stop / Start Sequence
 
-Strict verification at every step (via `PortScanner.killProcess()`):
-1. Check process is alive (`kill(pid, 0)`)
-2. Send `SIGTERM`
-3. Poll every 200ms for up to 4 seconds
-4. If still alive, send `SIGKILL`
-5. Poll every 200ms for up to 2 seconds
-6. If still alive, return error with full context (PID, port, process name, errno message)
+Every stop is routed through `PortMonitor.shutdownOne(pid:port:processName:dockerContainerID:)`:
+- **Native kill** (no container id) — strict SIGTERM → 4 s poll → SIGKILL → 2 s poll → verified dead (`PortScanner.killProcess`).
+- **Docker stop** — `docker stop <id>` via `ProcessLauncher`. The daemon process stays alive, so `isAlive(pid:)` is not used to verify; the port going away on the next scan is the confirmation signal.
 
-Kills for "Other" (unidentified project) processes require explicit user confirmation via an inline banner.
+Before any stop, `PortMonitor` saves a `LaunchSnapshot` via `SnapshotStore.save()`. This is what makes the "Recently stopped" entries restartable.
+
+A restart (`PortMonitor.startSnapshot`) calls `ProcessLauncher.relaunch`:
+- **Docker** — `docker start <id>`. Preserves volumes and network.
+- **Native** — spawns `Process` with `executableURL = snapshot.executablePath`, `arguments = snapshot.arguments.dropFirst()` (Swift re-injects argv[0]), `currentDirectoryURL = snapshot.cwd`, `environment = snapshot.environment`. stdio → `/dev/null`. After `run()`, calls `setpgid(pid, pid)` so the child becomes its own session leader and survives PortWatch quitting.
+
+After each relaunch, PortMonitor sleeps 1 s, rescans, and removes the snapshot from `SnapshotStore` if the port reappeared under the same `projectKey`. If not, the snapshot stays so the user can retry.
+
+Project-level restart (`PortMonitor.startProject(projectKey:)`) walks role buckets in priority order (**DB → Cache → Back → MCP → Front → Other**), with a 500 ms pause between buckets. Processes inside the same bucket launch in parallel.
+
+Kills for "Other" (unidentified project) processes still require explicit user confirmation via an inline banner.
 
 ### CPU % Calculation
 
