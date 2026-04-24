@@ -129,7 +129,7 @@ struct SettingsView: View {
             keywordRow(label: "DB folders", icon: "externaldrive.fill", color: Color(nsColor: .systemBrown), keywords: $settings.dbKeywords)
             keywordRow(label: "DB processes", icon: "externaldrive.fill", color: Color(nsColor: .systemBrown), keywords: $settings.dbProcessNames)
             keywordRow(label: "MCP", icon: "cpu", color: Color(nsColor: .systemPurple), keywords: $settings.mcpKeywords)
-            keywordRow(label: "Claude", icon: "sparkles", color: Color(nsColor: .systemOrange), keywords: $settings.claudeKeywords)
+            keywordRow(label: "Claude", icon: "ClaudeLogo", color: Color(red: 204/255, green: 124/255, blue: 94/255), keywords: $settings.claudeKeywords)
         }
     }
 
@@ -379,8 +379,7 @@ struct SettingsView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 9, weight: .medium))
+                iconView(icon: icon, size: 9)
                     .foregroundStyle(color)
                 Text(label)
                     .font(.system(size: 11, weight: .medium))
@@ -416,6 +415,21 @@ struct SettingsView: View {
         .padding(.vertical, 3)
         .background(color.opacity(0.12), in: Capsule())
         .overlay(Capsule().strokeBorder(color.opacity(0.25), lineWidth: 0.5))
+    }
+
+    /// Render an icon that may be either an asset catalog image (rendered with native colors)
+    /// or an SF Symbol (inherits the parent foregroundStyle).
+    @ViewBuilder
+    private func iconView(icon: String, size: CGFloat) -> some View {
+        if NSImage(named: icon) != nil {
+            Image(icon)
+                .resizable()
+                .scaledToFit()
+                .frame(width: size + 2, height: size + 2)
+        } else {
+            Image(systemName: icon)
+                .font(.system(size: size, weight: .medium))
+        }
     }
 
     private func addTagField(label: String, keywords: Binding<[String]>, hint: String) -> some View {

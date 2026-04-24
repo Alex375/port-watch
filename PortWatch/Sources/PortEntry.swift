@@ -117,7 +117,7 @@ struct PortEntry: Identifiable, Sendable {
         // Claude (detect before MCP so the Claude CLI itself is tagged "Claude"
         // even when it also spawns MCP child processes).
         if claudeKeywords.contains(where: { p.contains($0) || c.contains($0) }) {
-            return ("Claude", "sparkles")
+            return ("Claude", "ClaudeLogo")
         }
         // MCP
         if mcpKeywords.contains(where: { p.contains($0) || c.contains($0) || f.contains($0) }) {

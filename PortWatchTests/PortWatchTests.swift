@@ -400,7 +400,7 @@ final class PortEntryTests: XCTestCase {
             claudeKeywords: ["claude", "claude-code"]
         )
         XCTAssertEqual(result.label, "Claude")
-        XCTAssertEqual(result.icon, "sparkles")
+        XCTAssertEqual(result.icon, "ClaudeLogo")
     }
 
     func testDetectRoleClaudeByCmd() {
