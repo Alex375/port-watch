@@ -103,7 +103,7 @@ final class AppSettings {
             "mcpKeywords": defaultMCP,
             "claudeKeywords": defaultClaude,
             "ignoredProcesses": defaultIgnored,
-            "snapshotTTLMinutes": 10080, // 7 days
+            "snapshotTTLMinutes": 60, // 1 hour — use the "Keep forever" toggle for indefinite retention
         ])
 
         self.cpuThreshold = defaults.double(forKey: "cpuThreshold")
@@ -145,6 +145,6 @@ final class AppSettings {
         mcpKeywords = ["mcp-server", "mcp_server", "fastmcp", "modelcontextprotocol"]
         claudeKeywords = ["claude", "claude-code", "@anthropic-ai/claude-code", "anthropic-ai/claude"]
         ignoredProcesses = []
-        snapshotTTLMinutes = 10080 // 7 days
+        snapshotTTLMinutes = 60 // 1 hour — use the "Keep forever" toggle for indefinite retention
     }
 }

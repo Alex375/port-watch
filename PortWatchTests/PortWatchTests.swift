@@ -1228,7 +1228,18 @@ final class AppSettingsTests: XCTestCase {
         defer { settings.snapshotTTLMinutes = saved }
 
         settings.resetToDefaults()
-        XCTAssertEqual(settings.snapshotTTLMinutes, 10080, "Default TTL must be 7 days in minutes")
+        XCTAssertEqual(settings.snapshotTTLMinutes, 60, "Default TTL is 1 hour — max of the slider; use the toggle for indefinite retention")
+    }
+
+    func testSnapshotTTLMinutesZeroMeansKeepForever() {
+        // The "Keep forever" toggle writes 0 — SnapshotStore.pruneMinutes treats 0 as a no-op.
+        let settings = AppSettings.shared
+        let saved = settings.snapshotTTLMinutes
+        defer { settings.snapshotTTLMinutes = saved }
+
+        settings.snapshotTTLMinutes = 0
+        XCTAssertEqual(settings.snapshotTTLMinutes, 0)
+        XCTAssertEqual(UserDefaults.standard.integer(forKey: "snapshotTTLMinutes"), 0)
     }
 
     func testSnapshotTTLMinutesAcceptsShortRetention() {
@@ -1847,6 +1858,22 @@ final class LaunchSnapshotTests: XCTestCase {
 @MainActor
 final class SnapshotStoreTests: XCTestCase {
 
+    private var savedGlobalTTL: Int = 60
+
+    override func setUp() {
+        super.setUp()
+        // Disable the global auto-prune during SnapshotStore unit tests — several tests
+        // deliberately seed snapshots older than the default retention to exercise prune
+        // behaviour explicitly. Without this, `store.save()` would strip them on insert.
+        savedGlobalTTL = AppSettings.shared.snapshotTTLMinutes
+        AppSettings.shared.snapshotTTLMinutes = 0
+    }
+
+    override func tearDown() {
+        AppSettings.shared.snapshotTTLMinutes = savedGlobalTTL
+        super.tearDown()
+    }
+
     /// Fresh defaults per test so instances don't pollute each other.
     private func freshStore() -> (SnapshotStore, UserDefaults) {
         let suite = "test.SnapshotStore.\(UUID().uuidString)"
@@ -1977,9 +2004,8 @@ final class SnapshotStoreTests: XCTestCase {
     }
 
     func testPruneNoOpWhenTTLIsZero() {
-        // `save` runs its own prune using AppSettings.shared.snapshotTTLMinutes (10080 min default),
-        // so the seed snapshot must be fresh enough to survive that first pass. We then
-        // verify the explicit prune(olderThan: 0) leaves it alone even though it's older than 0h.
+        // Global TTL is forced to 0 in setUp, so `save()`'s internal prune is a no-op.
+        // Here we also verify the explicit `pruneMinutes(olderThan: 0)` leaves snapshots alone.
         let (store, _) = freshStore()
         store.save(makeSnapshot(capturedAt: Date().addingTimeInterval(-60)))
         XCTAssertEqual(store.snapshots.count, 1, "fresh snapshot should survive the initial prune")

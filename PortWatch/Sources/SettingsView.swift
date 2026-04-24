@@ -10,42 +10,12 @@ struct SettingsView: View {
     @State private var updater = UpdateChecker.shared
     @State private var snapshotStore = SnapshotStore.shared
     @State private var newKeyword: [String: String] = [:]
-    @State private var ttlUnit: TTLUnit = .fromMinutes(AppSettings.shared.snapshotTTLMinutes)
-
-    /// Display unit for the "Keep for" control. Stored TTL stays in minutes; this just
-    /// changes how the user edits it.
-    enum TTLUnit: String, CaseIterable, Identifiable {
-        case minutes, hours, days
-        var id: String { rawValue }
-        var label: String {
-            switch self {
-            case .minutes: "minutes"
-            case .hours:   "hours"
-            case .days:    "days"
-            }
-        }
-        var minutesPerStep: Int {
-            switch self {
-            case .minutes: 1
-            case .hours:   60
-            case .days:    24 * 60
-            }
-        }
-        var maxValue: Int {
-            switch self {
-            case .minutes: 1440   // 24 h
-            case .hours:   720    // 30 d
-            case .days:    30     // 30 d
-            }
-        }
-        /// Pick the coarsest unit that still represents the TTL exactly, defaulting to
-        /// minutes for anything under 1 h.
-        static func fromMinutes(_ minutes: Int) -> TTLUnit {
-            if minutes > 0 && minutes % (24 * 60) == 0 { return .days }
-            if minutes > 0 && minutes % 60 == 0 { return .hours }
-            return .minutes
-        }
-    }
+    /// Remembered slider value used when "Keep forever" is toggled off — so the UI restores
+    /// the previous retention instead of snapping to the minimum.
+    @State private var lastFiniteTTLMinutes: Int = {
+        let current = AppSettings.shared.snapshotTTLMinutes
+        return current > 0 ? current : 60
+    }()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -242,53 +212,50 @@ struct SettingsView: View {
         }
     }
 
-    /// Stepper + unit picker for the TTL. Stored value stays in minutes; the unit picker
-    /// just changes editing granularity (1 min step when in "minutes", 1 h step when in
-    /// "hours", 1 d step when in "days"). Switching units preserves the current retention
-    /// as closely as the coarser unit allows.
+    /// "Keep forever" toggle + slider for short-to-medium retention (1 min → 1 h).
+    /// Storage stays in minutes; `0` means no auto-prune ("forever"). The toggle drives
+    /// both the stored value and the slider's disabled state — flipping it off restores
+    /// the last slider value the user had set.
     private var ttlRow: some View {
-        let stepperBinding = Binding<Int>(
-            get: {
-                let m = settings.snapshotTTLMinutes
-                let step = ttlUnit.minutesPerStep
-                return max(1, min(ttlUnit.maxValue, (m + step / 2) / step))
-            },
+        let keepForeverBinding = Binding<Bool>(
+            get: { settings.snapshotTTLMinutes == 0 },
             set: { newVal in
-                settings.snapshotTTLMinutes = newVal * ttlUnit.minutesPerStep
+                if newVal {
+                    if settings.snapshotTTLMinutes > 0 {
+                        lastFiniteTTLMinutes = settings.snapshotTTLMinutes
+                    }
+                    settings.snapshotTTLMinutes = 0
+                } else {
+                    settings.snapshotTTLMinutes = max(1, min(60, lastFiniteTTLMinutes))
+                }
             }
         )
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                Text("Keep for")
+        let keepForever = keepForeverBinding.wrappedValue
+        return VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: keepForeverBinding) {
+                Text("Keep forever")
                     .font(.system(size: 11))
-                Spacer()
-                Stepper(value: stepperBinding, in: 1...ttlUnit.maxValue) {
-                    Text("\(stepperBinding.wrappedValue)")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .frame(minWidth: 32, alignment: .trailing)
-                }
-                .labelsHidden()
-                .controlSize(.small)
-                Picker("", selection: $ttlUnit) {
-                    ForEach(TTLUnit.allCases) { unit in
-                        Text(unit.label).tag(unit)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .controlSize(.small)
-                .frame(width: 90)
-                .onChange(of: ttlUnit) { _, newUnit in
-                    // Preserve retention when the user switches units: recompute the stored
-                    // minute count from the stepper's current visible value.
-                    let current = stepperBinding.wrappedValue
-                    settings.snapshotTTLMinutes = min(newUnit.maxValue, max(1, current)) * newUnit.minutesPerStep
-                }
             }
-            Text("Currently ≈ \(formatTTL(Double(settings.snapshotTTLMinutes)))")
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
+            .toggleStyle(.switch)
+            .controlSize(.small)
+
+            sliderRow(
+                label: "Keep for",
+                value: Binding(
+                    get: { Double(keepForever ? lastFiniteTTLMinutes : settings.snapshotTTLMinutes) },
+                    set: { newVal in
+                        let clamped = max(1, min(60, Int(newVal)))
+                        lastFiniteTTLMinutes = clamped
+                        if !keepForever { settings.snapshotTTLMinutes = clamped }
+                    }
+                ),
+                range: 1...60,
+                step: 1,
+                format: { "\(Int($0)) min" },
+                valueWidth: 58
+            )
+            .disabled(keepForever)
+            .opacity(keepForever ? 0.5 : 1.0)
         }
     }
 
