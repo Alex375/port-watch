@@ -167,10 +167,10 @@ struct SettingsView: View {
             sliderRow(
                 label: "Keep for",
                 value: Binding(
-                    get: { Double(settings.snapshotTTLHours) },
-                    set: { settings.snapshotTTLHours = Int($0) }
+                    get: { Double(settings.snapshotTTLMinutes) },
+                    set: { settings.snapshotTTLMinutes = Int($0) }
                 ),
-                range: 1...720,
+                range: 1...43200, // 1 minute → 30 days
                 step: 1,
                 format: formatTTL,
                 valueWidth: 58
@@ -216,13 +216,18 @@ struct SettingsView: View {
         }
     }
 
-    /// Convert TTL hours into a compact human-readable label: "1h", "23h", "1d", "7d", "30d".
-    private func formatTTL(_ hours: Double) -> String {
-        let h = Int(hours)
-        if h < 24 { return "\(h)h" }
-        let days = h / 24
-        let rem = h % 24
-        return rem == 0 ? "\(days)d" : "\(days)d\(rem)h"
+    /// Convert TTL minutes into a compact human-readable label: "5 min", "1h", "23h", "7d", "30d".
+    private func formatTTL(_ minutes: Double) -> String {
+        let m = Int(minutes)
+        if m < 60 { return "\(m) min" }
+        let hours = m / 60
+        let minRem = m % 60
+        if hours < 24 {
+            return minRem == 0 ? "\(hours)h" : "\(hours)h\(minRem)"
+        }
+        let days = hours / 24
+        let hRem = hours % 24
+        return hRem == 0 ? "\(days)d" : "\(days)d\(hRem)h"
     }
 
     // MARK: - About

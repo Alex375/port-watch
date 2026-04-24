@@ -70,10 +70,10 @@ final class AppSettings {
         didSet { UserDefaults.standard.set(ignoredProcesses, forKey: "ignoredProcesses") }
     }
 
-    /// How long a "recently stopped" snapshot is kept before being pruned.
+    /// How long a "recently stopped" snapshot is kept before being pruned, in minutes.
     /// 0 disables auto-prune (snapshots stay forever until cleared manually).
-    var snapshotTTLHours: Int {
-        didSet { UserDefaults.standard.set(snapshotTTLHours, forKey: "snapshotTTLHours") }
+    var snapshotTTLMinutes: Int {
+        didSet { UserDefaults.standard.set(snapshotTTLMinutes, forKey: "snapshotTTLMinutes") }
     }
 
     private init() {
@@ -103,7 +103,7 @@ final class AppSettings {
             "mcpKeywords": defaultMCP,
             "claudeKeywords": defaultClaude,
             "ignoredProcesses": defaultIgnored,
-            "snapshotTTLHours": 168,
+            "snapshotTTLMinutes": 10080, // 7 days
         ])
 
         self.cpuThreshold = defaults.double(forKey: "cpuThreshold")
@@ -118,7 +118,18 @@ final class AppSettings {
         self.mcpKeywords = defaults.stringArray(forKey: "mcpKeywords") ?? defaultMCP
         self.claudeKeywords = defaults.stringArray(forKey: "claudeKeywords") ?? defaultClaude
         self.ignoredProcesses = defaults.stringArray(forKey: "ignoredProcesses") ?? defaultIgnored
-        self.snapshotTTLHours = defaults.integer(forKey: "snapshotTTLHours")
+
+        // Migrate the old `snapshotTTLHours` key to `snapshotTTLMinutes` on first launch
+        // after the unit change. We check the legacy key on the underlying defaults dict
+        // (object(forKey:)) to distinguish "never set" from "explicitly 0".
+        if defaults.object(forKey: "snapshotTTLMinutes") == nil,
+           let legacyHours = defaults.object(forKey: "snapshotTTLHours") as? Int {
+            self.snapshotTTLMinutes = legacyHours * 60
+            defaults.set(legacyHours * 60, forKey: "snapshotTTLMinutes")
+            defaults.removeObject(forKey: "snapshotTTLHours")
+        } else {
+            self.snapshotTTLMinutes = defaults.integer(forKey: "snapshotTTLMinutes")
+        }
     }
 
     func resetToDefaults() {
@@ -134,6 +145,6 @@ final class AppSettings {
         mcpKeywords = ["mcp-server", "mcp_server", "fastmcp", "modelcontextprotocol"]
         claudeKeywords = ["claude", "claude-code", "@anthropic-ai/claude-code", "anthropic-ai/claude"]
         ignoredProcesses = []
-        snapshotTTLHours = 168
+        snapshotTTLMinutes = 10080 // 7 days
     }
 }

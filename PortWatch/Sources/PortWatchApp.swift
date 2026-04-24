@@ -34,7 +34,7 @@ struct MenuContentView: View {
     @State private var isRefreshing = false
     @State private var updater = UpdateChecker.shared
     @State private var isOtherCollapsed = true
-    @State private var isStoppedCollapsed = false
+    @State private var isStoppedCollapsed = true
     /// Measured height of the port list content. Drives the ScrollView's frame height explicitly,
     /// so that expanding a row animates the container smoothly instead of oscillating between
     /// "fits" and "scrolls" states (would trigger scroll-bar flicker — issue #20).

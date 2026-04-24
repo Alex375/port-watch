@@ -18,9 +18,9 @@ final class SnapshotStore {
     /// Exposed for testability — injected when a test wants an isolated defaults suite.
     private let defaults: UserDefaults
 
-    /// TTL in hours — snapshots older than this are pruned. Read from `AppSettings`.
-    private var ttlHours: Int {
-        AppSettings.shared.snapshotTTLHours
+    /// TTL in minutes — snapshots older than this are pruned. Read from `AppSettings`.
+    private var ttlMinutes: Int {
+        AppSettings.shared.snapshotTTLMinutes
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -78,14 +78,14 @@ final class SnapshotStore {
 
     /// Drop snapshots older than the current TTL. No-op if TTL ≤ 0.
     func prune() {
-        prune(olderThan: ttlHours)
+        pruneMinutes(olderThan: ttlMinutes)
     }
 
-    /// Drop snapshots older than `hours`. No-op if `hours` ≤ 0. Exposed separately so tests
-    /// can prune with an explicit TTL without mutating global settings.
-    func prune(olderThan hours: Int) {
-        guard hours > 0 else { return }
-        let cutoff = Date().addingTimeInterval(-Double(hours) * 3600)
+    /// Drop snapshots older than `minutes`. No-op if `minutes` ≤ 0. Exposed separately so
+    /// tests can prune with an explicit TTL without mutating global settings.
+    func pruneMinutes(olderThan minutes: Int) {
+        guard minutes > 0 else { return }
+        let cutoff = Date().addingTimeInterval(-Double(minutes) * 60)
         let before = snapshots.count
         snapshots = snapshots.filter { $0.value.capturedAt >= cutoff }
         if snapshots.count != before { persist() }

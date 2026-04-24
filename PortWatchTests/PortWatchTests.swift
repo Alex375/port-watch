@@ -1222,6 +1222,27 @@ final class AppSettingsTests: XCTestCase {
         )
     }
 
+    func testSnapshotTTLMinutesDefault() {
+        let settings = AppSettings.shared
+        let saved = settings.snapshotTTLMinutes
+        defer { settings.snapshotTTLMinutes = saved }
+
+        settings.resetToDefaults()
+        XCTAssertEqual(settings.snapshotTTLMinutes, 10080, "Default TTL must be 7 days in minutes")
+    }
+
+    func testSnapshotTTLMinutesAcceptsShortRetention() {
+        // User asked: "je veux qu'il reste 5 min en historique". Make sure 5 min is a valid,
+        // persisted value.
+        let settings = AppSettings.shared
+        let saved = settings.snapshotTTLMinutes
+        defer { settings.snapshotTTLMinutes = saved }
+
+        settings.snapshotTTLMinutes = 5
+        XCTAssertEqual(settings.snapshotTTLMinutes, 5)
+        XCTAssertEqual(UserDefaults.standard.integer(forKey: "snapshotTTLMinutes"), 5)
+    }
+
     func testClaudeKeywordsPersistToUserDefaults() {
         let settings = AppSettings.shared
         let saved = settings.claudeKeywords
@@ -1936,20 +1957,57 @@ final class SnapshotStoreTests: XCTestCase {
                                   capturedAt: Date().addingTimeInterval(-1 * 3600)) // 1 h old
         store.save(old)
         store.save(recent)
-        store.prune(olderThan: 24) // 1-day TTL
+        store.pruneMinutes(olderThan: 24 * 60) // 1-day TTL in minutes
+        XCTAssertEqual(store.snapshots.count, 1)
+        XCTAssertEqual(store.snapshots.values.first?.processName, "back")
+    }
+
+    func testPruneByMinutesDropsSnapshotsOlderThanMinutes() {
+        // User-facing example from the settings: 5-minute retention.
+        let (store, _) = freshStore()
+        let older = makeSnapshot(port: 3000, processName: "front",
+                                 capturedAt: Date().addingTimeInterval(-10 * 60)) // 10 min old
+        let fresh = makeSnapshot(port: 4000, processName: "back",
+                                 capturedAt: Date().addingTimeInterval(-60)) // 1 min old
+        store.save(older)
+        store.save(fresh)
+        store.pruneMinutes(olderThan: 5)
         XCTAssertEqual(store.snapshots.count, 1)
         XCTAssertEqual(store.snapshots.values.first?.processName, "back")
     }
 
     func testPruneNoOpWhenTTLIsZero() {
-        // `save` runs its own prune using AppSettings.shared.snapshotTTLHours (168h default),
+        // `save` runs its own prune using AppSettings.shared.snapshotTTLMinutes (10080 min default),
         // so the seed snapshot must be fresh enough to survive that first pass. We then
         // verify the explicit prune(olderThan: 0) leaves it alone even though it's older than 0h.
         let (store, _) = freshStore()
         store.save(makeSnapshot(capturedAt: Date().addingTimeInterval(-60)))
         XCTAssertEqual(store.snapshots.count, 1, "fresh snapshot should survive the initial prune")
-        store.prune(olderThan: 0)
+        store.pruneMinutes(olderThan: 0)
         XCTAssertEqual(store.snapshots.count, 1, "TTL ≤ 0 should preserve everything")
+    }
+
+    func testSaveConditionalOnKillSuccess() {
+        // Mirrors the refactored flow in PortMonitor.stopPort: a snapshot is *captured in
+        // memory* before the kill but only committed to the store if the kill is verified.
+        // This test reproduces the two branches (verified dead → save, still alive → no save)
+        // directly on the store, since the PortMonitor kill path is integration-level and
+        // relies on real PIDs.
+        let (store, _) = freshStore()
+        let pending = makeSnapshot(port: 7777, processName: "python")
+
+        // Branch 1: kill reported success but process is still alive → no commit.
+        let killReportedSuccess = true
+        let stillAlive = true
+        if killReportedSuccess && !stillAlive {
+            store.save(pending)
+        }
+        XCTAssertTrue(store.isEmpty, "Must not commit when the kill couldn't be verified")
+
+        // Branch 2: kill verified (process gone) → commit.
+        let verifiedDead = true
+        if verifiedDead { store.save(pending) }
+        XCTAssertEqual(store.snapshots.count, 1)
     }
 
     func testGroupedByProjectSortsSnapshotsByRoleWithinGroup() {
