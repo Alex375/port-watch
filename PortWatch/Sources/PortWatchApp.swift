@@ -34,6 +34,7 @@ struct MenuContentView: View {
     @State private var isRefreshing = false
     @State private var updater = UpdateChecker.shared
     @State private var isOtherCollapsed = true
+    @State private var isStoppedCollapsed = true
     /// Measured height of the port list content. Drives the ScrollView's frame height explicitly,
     /// so that expanding a row animates the container smoothly instead of oscillating between
     /// "fits" and "scrolls" states (would trigger scroll-bar flicker — issue #20).
@@ -140,7 +141,7 @@ struct MenuContentView: View {
             Divider()
 
             Group {
-                if monitor.entries.isEmpty {
+                if monitor.entries.isEmpty && monitor.stoppedGroups.isEmpty {
                     VStack(spacing: 12) {
                         ZStack {
                             Circle()
@@ -167,6 +168,12 @@ struct MenuContentView: View {
                         VStack(alignment: .leading, spacing: 16) {
                             ForEach(monitor.groupedEntries, id: \.projectName) { group in
                                 projectSection(group)
+                            }
+                            if !monitor.stoppedGroups.isEmpty {
+                                if !monitor.entries.isEmpty {
+                                    Divider().opacity(0.4)
+                                }
+                                recentlyStoppedSection
                             }
                         }
                         .padding(.horizontal, 14)
@@ -352,11 +359,16 @@ struct MenuContentView: View {
                 if !isOther {
                     if isKilling {
                         ProgressView()
-                            .controlSize(.mini)
-                            .frame(width: 14, height: 14)
+                            .controlSize(.small)
+                            .frame(width: 16, height: 16)
                     } else {
-                        HoverButton(icon: "xmark.circle", color: .red.opacity(0.8), size: .caption, help: "Kill all processes in \(group.projectName)") {
-                            Task { await monitor.killProject(group) }
+                        HoverButton(
+                            icon: "power.circle.fill",
+                            color: .red.opacity(0.85),
+                            size: .system(size: 16),
+                            help: "Stop all processes in \(group.projectName) (snapshots saved for restart)"
+                        ) {
+                            Task { await monitor.stopProject(group) }
                         }
                     }
                 }
@@ -383,6 +395,112 @@ struct MenuContentView: View {
         }
     }
 
+    // MARK: - Recently stopped section
+
+    @ViewBuilder
+    private var recentlyStoppedSection: some View {
+        let groups = monitor.stoppedGroups
+
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: isStoppedCollapsed ? "chevron.right" : "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 12)
+                    .animation(.easeInOut(duration: 0.15), value: isStoppedCollapsed)
+
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Button {
+                    withAnimation { monitor.snapshotStore.clearAll() }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 9))
+                        Text("Clear")
+                            .font(.system(size: 10))
+                    }
+                    .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.borderless)
+                .help("Forget all recently stopped snapshots")
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation(.easeInOut(duration: 0.2)) { isStoppedCollapsed.toggle() }
+            }
+
+            if !isStoppedCollapsed {
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(groups) { group in
+                        stoppedProjectSection(group)
+                    }
+                }
+            }
+        }
+        .transition(.opacity.combined(with: .move(edge: .top)))
+    }
+
+    @ViewBuilder
+    private func stoppedProjectSection(_ group: StoppedProjectGroup) -> some View {
+        let projectLaunching = group.snapshots.contains { monitor.launchingSnapshotIDs.contains($0.id) }
+
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(group.projectName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+
+                Text("\(group.snapshots.count)")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Color.secondary.opacity(0.10), in: Capsule())
+
+                Spacer()
+
+                if projectLaunching {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 16, height: 16)
+                } else {
+                    HoverButton(
+                        icon: "play.circle.fill",
+                        color: .green.opacity(0.95),
+                        size: .system(size: 16),
+                        help: "Restart all \(group.snapshots.count) process\(group.snapshots.count == 1 ? "" : "es") in \(group.projectName)"
+                    ) {
+                        let key = group.projectKey
+                        Task { await monitor.startProject(projectKey: key) }
+                    }
+                }
+            }
+            .padding(.vertical, 2)
+
+            VStack(spacing: 6) {
+                ForEach(group.snapshots) { snap in
+                    stoppedRow(snap)
+                        .transition(.opacity.combined(with: .scale(scale: 0.97)))
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func stoppedRow(_ snap: LaunchSnapshot) -> some View {
+        StoppedRowView(
+            snap: snap,
+            isLaunching: monitor.launchingSnapshotIDs.contains(snap.id),
+            onStart: { Task { await monitor.startSnapshot(snap) } },
+            onForget: { withAnimation { monitor.snapshotStore.remove(id: snap.id) } }
+        )
+    }
+
     // MARK: - Port row
 
     @ViewBuilder
@@ -399,7 +517,7 @@ struct MenuContentView: View {
                 if display.entry.projectName == "Other" {
                     monitor.pendingKillConfirmation = display
                 } else {
-                    Task { await monitor.killPort(display) }
+                    Task { await monitor.stopPort(display) }
                 }
             },
             onOpen: {
@@ -410,7 +528,7 @@ struct MenuContentView: View {
             onConfirmKill: {
                 let d = display
                 monitor.pendingKillConfirmation = nil
-                Task { await monitor.killPort(d) }
+                Task { await monitor.stopPort(d) }
             },
             onCancelKill: {
                 monitor.pendingKillConfirmation = nil
@@ -456,6 +574,168 @@ struct FooterButton: View {
 }
 
 // MARK: - Hover Button
+
+// MARK: - Stopped row view
+
+/// Single "Recently stopped" card. Mirrors `PortRowView`'s hover pattern: the launch /
+/// forget buttons reveal themselves only when the row is hovered, while the captured-ago
+/// timestamp takes that slot at rest. Keeps the visual density low so dozens of snapshots
+/// remain scannable.
+struct StoppedRowView: View {
+    let snap: LaunchSnapshot
+    let isLaunching: Bool
+    let onStart: () -> Void
+    let onForget: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        let accent = StoppedRowStyle.roleColor(snap.roleLabel)
+
+        HStack(spacing: 0) {
+            Rectangle()
+                .fill(accent.opacity(0.35))
+                .frame(width: 3)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .center, spacing: 10) {
+                    // Port number in tertiary so it reads as "dormant" at a glance and
+                    // can't be mistaken for an actively listening port.
+                    Text(String(snap.port))
+                        .font(.system(size: 16, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+
+                    if let label = snap.roleLabel, let icon = snap.roleIcon {
+                        StoppedRowStyle.roleBadge(icon: icon, label: label)
+                    }
+
+                    Spacer(minLength: 6)
+
+                    if isLaunching {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .frame(width: 14, height: 14)
+                    } else if isHovered {
+                        actionsCluster
+                            .transition(.opacity)
+                    } else {
+                        capturedPill
+                            .transition(.opacity)
+                    }
+                }
+
+                HStack(spacing: 6) {
+                    Text(snap.processName)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                    if !snap.commandSummary.isEmpty && snap.commandSummary != snap.processName {
+                        Text("·")
+                            .foregroundStyle(.tertiary)
+                        Text(snap.commandSummary)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .help(snap.commandSummary)
+                    }
+                    Spacer(minLength: 6)
+                    if !snap.shortCwd.isEmpty {
+                        HStack(spacing: 3) {
+                            Image(systemName: "folder")
+                                .font(.system(size: 9))
+                            Text(snap.shortCwd)
+                                .font(.system(size: 10))
+                                .lineLimit(1)
+                                .truncationMode(.head)
+                        }
+                        .foregroundStyle(.tertiary)
+                        .help(snap.cwd)
+                    }
+                }
+            }
+            .padding(.vertical, 8)
+            .padding(.leading, 12)
+            .padding(.trailing, 10)
+        }
+        .background(Color.primary.opacity(0.02), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.secondary.opacity(0.18), style: StrokeStyle(lineWidth: 0.5, dash: [3, 2]))
+        )
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
+    }
+
+    private var capturedPill: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 9))
+            Text(snap.capturedAgo)
+                .font(.system(size: 10, weight: .medium))
+                .monospacedDigit()
+        }
+        .foregroundStyle(.tertiary)
+    }
+
+    private var actionsCluster: some View {
+        HStack(spacing: 8) {
+            Button(action: onStart) {
+                Image(systemName: "play.circle.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.green)
+            }
+            .buttonStyle(.borderless)
+            .help("Launch: \(snap.commandSummary)\nin \(snap.shortCwd)")
+
+            Button(action: onForget) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 14, height: 14)
+            }
+            .buttonStyle(.borderless)
+            .help("Forget this snapshot")
+        }
+    }
+}
+
+// MARK: - Stopped row styling
+
+/// Role badges/colors for the "Recently stopped" section — mirrors the styling inside
+/// `PortRowView` so running and stopped rows feel like siblings, just dimmed. Extracted
+/// as a namespaced helper so it can be reused across the top-level views without leaking
+/// into public API.
+enum StoppedRowStyle {
+    static func roleColor(_ label: String?) -> Color {
+        switch label {
+        case "Front": return Color(nsColor: .systemBlue)
+        case "Back":  return Color(nsColor: .systemIndigo)
+        case "DB":    return Color(nsColor: .systemBrown)
+        case "Cache": return Color(nsColor: .systemGray)
+        case "MCP":   return Color(nsColor: .systemPurple)
+        default:      return Color.secondary
+        }
+    }
+
+    @ViewBuilder
+    static func roleBadge(icon: String, label: String) -> some View {
+        let color = roleColor(label)
+        HStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.system(size: 9))
+            Text(label.uppercased())
+                .font(.system(size: 9, weight: .bold))
+                .tracking(0.3)
+        }
+        .foregroundStyle(color.opacity(0.75))
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(color.opacity(0.10), in: Capsule())
+        .overlay(
+            Capsule().strokeBorder(color.opacity(0.18), lineWidth: 0.5)
+        )
+    }
+}
 
 struct HoverButton: View {
     let icon: String

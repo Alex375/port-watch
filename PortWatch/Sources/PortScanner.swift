@@ -71,59 +71,99 @@ enum PortScanner: Sendable {
         }
     }
 
-    /// Get the command line arguments for a process via sysctl(KERN_PROCARGS2).
-    /// Returns a short, human-readable summary like "node vite" or "python manage.py runserver".
-    static func commandLine(pid: Int32) -> String {
-        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
-        var size: Int = 0
+    /// Full argv + environment captured from a running process via `KERN_PROCARGS2`.
+    /// `summary` is the short human-readable form previously returned by `commandLine()`.
+    struct ProcessArgs: Sendable {
+        let argv: [String]
+        let environment: [String: String]
+        let summary: String
+    }
 
-        // Get buffer size
-        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0 else { return "" }
-
-        var buffer = [UInt8](repeating: 0, count: size)
-        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0 else { return "" }
-
-        // First 4 bytes = argc
-        guard size > MemoryLayout<Int32>.size else { return "" }
+    /// Parse the raw buffer returned by `sysctl(KERN_PROCARGS2, …)` into argv + env.
+    /// Layout: `[argc: Int32][exec_path\0][null padding][argv[0]\0argv[1]\0…][env[0]\0env[1]\0…]`.
+    /// Exposed for unit testing with synthetic buffers.
+    static func parseProcArgsBuffer(_ buffer: [UInt8]) -> ProcessArgs {
+        let size = buffer.count
+        guard size > MemoryLayout<Int32>.size else {
+            return ProcessArgs(argv: [], environment: [:], summary: "")
+        }
         let argc = buffer.withUnsafeBufferPointer {
             $0.baseAddress!.withMemoryRebound(to: Int32.self, capacity: 1) { $0.pointee }
         }
 
-        // After argc: exec_path (null-terminated), then padding nulls, then argv strings (null-separated)
         var offset = MemoryLayout<Int32>.size
-
-        // Skip exec_path
+        // Skip exec_path (null-terminated) and any null padding that follows.
         while offset < size && buffer[offset] != 0 { offset += 1 }
-        // Skip null padding
         while offset < size && buffer[offset] == 0 { offset += 1 }
 
-        // Read argv strings
-        var args: [String] = []
+        // Read argc argv strings (first token may be whitespace-empty in rare cases — we count
+        // every null-delimited token until argc is reached, including empty ones).
+        var argv: [String] = []
         var argCount: Int32 = 0
         while offset < size && argCount < argc {
             let start = offset
             while offset < size && buffer[offset] != 0 { offset += 1 }
-            if offset > start {
-                let arg = String(bytes: buffer[start..<offset], encoding: .utf8) ?? ""
-                args.append(arg)
-                argCount += 1
-            }
+            let arg = String(bytes: buffer[start..<offset], encoding: .utf8) ?? ""
+            argv.append(arg)
+            argCount += 1
             offset += 1 // skip null terminator
         }
 
-        guard !args.isEmpty else { return "" }
+        // Everything remaining up to the end is the environment block — each entry is
+        // "KEY=VALUE" null-terminated. A trailing empty token marks the end.
+        var environment: [String: String] = [:]
+        while offset < size {
+            let start = offset
+            while offset < size && buffer[offset] != 0 { offset += 1 }
+            if offset == start { offset += 1; continue }
+            if let pair = String(bytes: buffer[start..<offset], encoding: .utf8),
+               let eq = pair.firstIndex(of: "=") {
+                let key = String(pair[..<eq])
+                let value = String(pair[pair.index(after: eq)...])
+                if !key.isEmpty { environment[key] = value }
+            }
+            offset += 1
+        }
 
-        // Shorten: use basename for the executable, keep other args
-        let exe = URL(fileURLWithPath: args[0]).lastPathComponent
-        let restArgs = args.dropFirst().map { arg -> String in
-            // Shorten long paths to basename
+        let summary = Self.buildSummary(argv: argv)
+        return ProcessArgs(argv: argv, environment: environment, summary: summary)
+    }
+
+    /// Short, human-readable command summary (basename of executable + args, long paths
+    /// shortened to basenames). Used by `PortEntry.commandLine` and the UI tooltip.
+    private static func buildSummary(argv: [String]) -> String {
+        guard !argv.isEmpty else { return "" }
+        let exe = URL(fileURLWithPath: argv[0]).lastPathComponent
+        let rest = argv.dropFirst().map { arg -> String in
             if arg.hasPrefix("/") && arg.contains("/") {
                 return URL(fileURLWithPath: arg).lastPathComponent
             }
             return arg
         }
+        return ([exe] + rest).joined(separator: " ")
+    }
 
-        return ([exe] + restArgs).joined(separator: " ")
+    /// Fetch argv + env + summary for a live process.
+    /// Returns empty `ProcessArgs` if the sysctl call fails (process gone, permissions).
+    static func processArgs(pid: Int32) -> ProcessArgs {
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size: Int = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0 else {
+            return ProcessArgs(argv: [], environment: [:], summary: "")
+        }
+        var buffer = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0 else {
+            return ProcessArgs(argv: [], environment: [:], summary: "")
+        }
+        // sysctl may have written fewer bytes than the initial allocation.
+        if size < buffer.count { buffer.removeSubrange(size..<buffer.count) }
+        return parseProcArgsBuffer(buffer)
+    }
+
+    /// Legacy one-shot accessor — kept so existing callers that only need the summary
+    /// string don't have to destructure `ProcessArgs`.
+    static func commandLine(pid: Int32) -> String {
+        processArgs(pid: pid).summary
     }
 
     // MARK: - Process lifecycle
@@ -266,9 +306,9 @@ enum PortScanner: Sendable {
         // Per-PID cache to avoid redundant syscalls
         var nameCache: [Int32: String] = [:]
         var pathCache: [Int32: String] = [:]
-        var cmdCache: [Int32: String] = [:]
+        var argsCache: [Int32: ProcessArgs] = [:]
         var cwdCache: [Int32: String] = [:]
-        var projectCache: [Int32: (name: String, worktreeName: String?)] = [:]
+        var projectCache: [UInt64: ProjectDetector.ProjectInfo] = [:]
         var bsdCache: [Int32: proc_bsdinfo?] = [:]
         var taskCache: [Int32: proc_taskinfo?] = [:]
 
@@ -307,11 +347,11 @@ enum PortScanner: Sendable {
                 return path
             }
 
-            func getCmd() -> String {
-                if let cached = cmdCache[pid] { return cached }
-                let cmd = commandLine(pid: pid)
-                cmdCache[pid] = cmd
-                return cmd
+            func getArgs() -> ProcessArgs {
+                if let cached = argsCache[pid] { return cached }
+                let args = processArgs(pid: pid)
+                argsCache[pid] = args
+                return args
             }
 
             func getBSD() -> proc_bsdinfo? {
@@ -328,10 +368,14 @@ enum PortScanner: Sendable {
                 return cwd
             }
 
-            func getProject(cwd: String, port: UInt16) -> (name: String, worktreeName: String?) {
-                if let cached = projectCache[pid] { return cached }
-                let result = ProjectDetector.detectProject(cwd: cwd, port: port)
-                projectCache[pid] = result
+            // Cache key combines pid + port because docker containers resolve by port
+            // (two ports on the same PID can belong to different containers in theory,
+            // though unusual). For git/known/other, the key is pid-dependent only via cwd.
+            func getProject(cwd: String, port: UInt16, processName: String) -> ProjectDetector.ProjectInfo {
+                let cacheKey = (UInt64(UInt32(bitPattern: pid)) << 16) | UInt64(port)
+                if let cached = projectCache[cacheKey] { return cached }
+                let result = ProjectDetector.detectProject(cwd: cwd, port: port, processName: processName)
+                projectCache[cacheKey] = result
                 return result
             }
 
@@ -387,15 +431,15 @@ enum PortScanner: Sendable {
                 }
 
                 let cwd = getCwd()
-                let project = getProject(cwd: cwd, port: localPort)
                 let name = getName()
-                let cmd = getCmd()
+                let project = getProject(cwd: cwd, port: localPort, processName: name)
+                let args = getArgs()
 
                 let folder = cwd.isEmpty ? "" : URL(fileURLWithPath: cwd).lastPathComponent
                 let role: (label: String?, icon: String?)
                 if let kw = keywords {
                     role = PortEntry.detectRole(
-                        folder: folder, process: name, cmd: cmd,
+                        folder: folder, process: name, cmd: args.summary,
                         frontKeywords: kw.front, backKeywords: kw.back,
                         dbKeywords: kw.db, dbProcessNames: kw.dbProc,
                         mcpKeywords: kw.mcp,
@@ -411,7 +455,9 @@ enum PortScanner: Sendable {
                     ppid: ppid,
                     processName: name,
                     processPath: getPath(),
-                    commandLine: cmd,
+                    commandLine: args.summary,
+                    arguments: args.argv,
+                    environment: args.environment,
                     cwd: cwd,
                     tcpState: tcpState,
                     processStartTime: startTime,
@@ -419,6 +465,8 @@ enum PortScanner: Sendable {
                     totalCPUTimeNs: cpuTimeNs,
                     projectName: project.name,
                     worktreeName: project.worktreeName,
+                    projectKey: project.key,
+                    dockerContainerID: ProjectDetector.dockerContainerID(forPort: localPort),
                     roleLabel: role.label,
                     roleIcon: role.icon
                 )

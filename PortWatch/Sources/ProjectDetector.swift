@@ -14,14 +14,26 @@ enum ProjectDetector: Sendable {
 
     // MARK: - Docker
 
+    /// Map from exposed host port → container display label ("Docker: <name>").
     private nonisolated(unsafe) static var dockerPortMap: [UInt16: String] = [:]
+    /// Map from exposed host port → container id (truncated 12-char form from `docker ps`).
+    /// Used to route stop/restart through `docker stop/start <id>` instead of signalling the daemon.
+    private nonisolated(unsafe) static var dockerContainerIDMap: [UInt16: String] = [:]
 
     /// Call once per scan cycle before calling detectProject.
     static func refreshDockerContainers() {
-        dockerPortMap = fetchDockerPortMap()
+        let result = fetchDockerPortMap()
+        dockerPortMap = result.labels
+        dockerContainerIDMap = result.ids
     }
 
-    private static func fetchDockerPortMap() -> [UInt16: String] {
+    /// Look up the container id for a host port. Returns nil if the port isn't
+    /// mapped to a running container.
+    static func dockerContainerID(forPort port: UInt16) -> String? {
+        dockerContainerIDMap[port]
+    }
+
+    private static func fetchDockerPortMap() -> (labels: [UInt16: String], ids: [UInt16: String]) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/local/bin/docker")
         if !FileManager.default.fileExists(atPath: process.executableURL!.path) {
@@ -41,15 +53,16 @@ enum ProjectDetector: Sendable {
         do {
             try process.run()
         } catch {
-            return [:]
+            return (labels: [:], ids: [:])
         }
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
 
-        guard process.terminationStatus == 0, !data.isEmpty else { return [:] }
+        guard process.terminationStatus == 0, !data.isEmpty else { return (labels: [:], ids: [:]) }
 
-        var portMap: [UInt16: String] = [:]
+        var labels: [UInt16: String] = [:]
+        var ids: [UInt16: String] = [:]
         let lines = String(data: data, encoding: .utf8)?.components(separatedBy: .newlines) ?? []
         for line in lines {
             guard !line.isEmpty,
@@ -59,6 +72,7 @@ enum ProjectDetector: Sendable {
             let names = json["Names"] as? String ?? ""
             let image = json["Image"] as? String ?? ""
             let label = names.isEmpty ? image : names
+            let containerID = (json["ID"] as? String) ?? ""
             guard !label.isEmpty else { continue }
 
             if let ports = json["Ports"] as? String {
@@ -68,7 +82,10 @@ enum ProjectDetector: Sendable {
                         if let colonRange = hostPart.range(of: ":", options: .backwards) {
                             let portStr = hostPart[hostPart.index(after: colonRange.lowerBound)...]
                             if let port = UInt16(portStr) {
-                                portMap[port] = "Docker: \(label)"
+                                labels[port] = "Docker: \(label)"
+                                if !containerID.isEmpty {
+                                    ids[port] = containerID
+                                }
                             }
                         }
                     }
@@ -76,37 +93,49 @@ enum ProjectDetector: Sendable {
             }
         }
 
-        return portMap
+        return (labels: labels, ids: ids)
     }
 
     // MARK: - Public API
 
-    static func detectProject(cwd: String, port: UInt16) -> (name: String, worktreeName: String?) {
+    /// Detection result — includes a stable `projectKey` that survives app restarts and
+    /// disambiguates projects with the same display name (e.g. two "backend" folders).
+    struct ProjectInfo: Sendable {
+        let name: String
+        let worktreeName: String?
+        /// Stable identifier. Format: `docker:<id>` / `<git-root-absolute-path>` /
+        /// `known:<serviceName>` / `other:<processName>`.
+        let key: String
+    }
+
+    static func detectProject(cwd: String, port: UInt16, processName: String = "") -> ProjectInfo {
         // 1. Docker first
         if let dockerName = dockerPortMap[port] {
-            return (dockerName, nil)
+            let id = dockerContainerIDMap[port] ?? dockerName
+            return ProjectInfo(name: dockerName, worktreeName: nil, key: "docker:\(id)")
         }
 
         // 2. Git root = project name (primary strategy)
         if !cwd.isEmpty {
-            if let result = findGitRootName(from: cwd) {
-                return result
+            if let result = findGitRoot(from: cwd) {
+                return ProjectInfo(name: result.name, worktreeName: result.worktreeName, key: result.rootPath)
             }
         }
 
         // 3. Known port fallback
         if let known = knownPorts[port] {
-            return (known, nil)
+            return ProjectInfo(name: known, worktreeName: nil, key: "known:\(known)")
         }
 
-        return ("Other", nil)
+        let suffix = processName.isEmpty ? "unknown" : processName
+        return ProjectInfo(name: "Other", worktreeName: nil, key: "other:\(suffix)")
     }
 
     // MARK: - Git root detection
 
-    /// Walk up from path to find the nearest .git entry. If .git is a directory, returns the folder name.
-    /// If .git is a file (worktree), reads the gitdir path and resolves the main repository name.
-    private static func findGitRootName(from path: String) -> (name: String, worktreeName: String?)? {
+    /// Walk up from path to find the nearest .git entry. Returns the repository name, an
+    /// optional worktree name, and the absolute root path used as a stable `projectKey`.
+    private static func findGitRoot(from path: String) -> (name: String, worktreeName: String?, rootPath: String)? {
         var current = URL(fileURLWithPath: path)
         let root = URL(fileURLWithPath: "/")
         let fm = FileManager.default
@@ -116,16 +145,17 @@ enum ProjectDetector: Sendable {
             var isDirectory: ObjCBool = false
             if fm.fileExists(atPath: gitURL.path, isDirectory: &isDirectory) {
                 if isDirectory.boolValue {
-                    // Normal git repo
-                    return (current.lastPathComponent, nil)
+                    // Normal git repo — project key is the repo's absolute path.
+                    return (current.lastPathComponent, nil, current.path)
                 } else {
-                    // Git worktree: .git is a file containing "gitdir: <path>"
+                    // Git worktree: .git is a file containing "gitdir: <path>". We key
+                    // each worktree separately so restarting one doesn't collide with
+                    // another, but keep the main repo name for display.
                     let wtName = current.lastPathComponent
                     if let mainRepoName = resolveWorktreeMainRepo(gitFile: gitURL) {
-                        return (mainRepoName, wtName)
+                        return (mainRepoName, wtName, current.path)
                     }
-                    // Fallback: use current folder name if we can't resolve
-                    return (current.lastPathComponent, wtName)
+                    return (current.lastPathComponent, wtName, current.path)
                 }
             }
             let parent = current.deletingLastPathComponent()

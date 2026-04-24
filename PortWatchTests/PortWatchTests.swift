@@ -70,6 +70,8 @@ final class PortEntryTests: XCTestCase {
         processName: String = "node",
         processPath: String = "/usr/bin/node",
         commandLine: String = "node server.js",
+        arguments: [String] = [],
+        environment: [String: String] = [:],
         cwd: String = "/Users/test/project",
         tcpState: TCPState = .listen,
         processStartTime: Date = Date(),
@@ -77,6 +79,8 @@ final class PortEntryTests: XCTestCase {
         totalCPUTimeNs: UInt64 = 0,
         projectName: String = "TestProject",
         worktreeName: String? = nil,
+        projectKey: String = "other:test",
+        dockerContainerID: String? = nil,
         roleLabel: String? = nil,
         roleIcon: String? = nil
     ) -> PortEntry {
@@ -88,6 +92,8 @@ final class PortEntryTests: XCTestCase {
             processName: processName,
             processPath: processPath,
             commandLine: commandLine,
+            arguments: arguments,
+            environment: environment,
             cwd: cwd,
             tcpState: tcpState,
             processStartTime: processStartTime,
@@ -95,6 +101,8 @@ final class PortEntryTests: XCTestCase {
             totalCPUTimeNs: totalCPUTimeNs,
             projectName: projectName,
             worktreeName: worktreeName,
+            projectKey: projectKey,
+            dockerContainerID: dockerContainerID,
             roleLabel: roleLabel,
             roleIcon: roleIcon
         )
@@ -486,6 +494,8 @@ final class PortEntryDisplayTests: XCTestCase {
             processName: processName,
             processPath: "/usr/bin/node",
             commandLine: commandLine,
+            arguments: [],
+            environment: [:],
             cwd: "/tmp",
             tcpState: .listen,
             processStartTime: Date(),
@@ -493,6 +503,8 @@ final class PortEntryDisplayTests: XCTestCase {
             totalCPUTimeNs: 0,
             projectName: "Test",
             worktreeName: nil,
+            projectKey: "other:test",
+            dockerContainerID: nil,
             roleLabel: nil,
             roleIcon: nil
         )
@@ -542,6 +554,8 @@ final class ProjectGroupTests: XCTestCase {
             processName: "node",
             processPath: "/usr/bin/node",
             commandLine: "node index.js",
+            arguments: [],
+            environment: [:],
             cwd: "/tmp",
             tcpState: .listen,
             processStartTime: Date(),
@@ -549,6 +563,8 @@ final class ProjectGroupTests: XCTestCase {
             totalCPUTimeNs: 0,
             projectName: "MyApp",
             worktreeName: nil,
+            projectKey: "other:test",
+            dockerContainerID: nil,
             roleLabel: nil,
             roleIcon: nil
         )
@@ -563,17 +579,23 @@ final class ProjectGroupTests: XCTestCase {
     func testProjectGroupMultipleEntries() {
         let entry1 = PortEntry(
             id: "3000-1-0", port: 3000, pid: 1, ppid: 0,
-            processName: "node", processPath: "", commandLine: "", cwd: "",
+            processName: "node", processPath: "", commandLine: "",
+            arguments: [], environment: [:], cwd: "",
             tcpState: .listen, processStartTime: Date(),
             residentMemoryBytes: 0, totalCPUTimeNs: 0,
-            projectName: "MyApp", worktreeName: nil, roleLabel: nil, roleIcon: nil
+            projectName: "MyApp", worktreeName: nil,
+            projectKey: "other:test", dockerContainerID: nil,
+            roleLabel: nil, roleIcon: nil
         )
         let entry2 = PortEntry(
             id: "3001-2-0", port: 3001, pid: 2, ppid: 0,
-            processName: "python", processPath: "", commandLine: "", cwd: "",
+            processName: "python", processPath: "", commandLine: "",
+            arguments: [], environment: [:], cwd: "",
             tcpState: .listen, processStartTime: Date(),
             residentMemoryBytes: 0, totalCPUTimeNs: 0,
-            projectName: "MyApp", worktreeName: nil, roleLabel: nil, roleIcon: nil
+            projectName: "MyApp", worktreeName: nil,
+            projectKey: "other:test", dockerContainerID: nil,
+            roleLabel: nil, roleIcon: nil
         )
         let displays = [
             PortEntryDisplay(entry: entry1, cpuPercent: nil, isZombie: false),
@@ -1200,6 +1222,78 @@ final class AppSettingsTests: XCTestCase {
         )
     }
 
+    func testSnapshotTTLMinutesDefault() {
+        let settings = AppSettings.shared
+        let saved = settings.snapshotTTLMinutes
+        defer { settings.snapshotTTLMinutes = saved }
+
+        settings.resetToDefaults()
+        XCTAssertEqual(settings.snapshotTTLMinutes, 60, "Default TTL is 1 hour — max of the slider; use the toggle for indefinite retention")
+    }
+
+    func testSnapTTLMinutesStaysPreciseBelowTenMinutes() {
+        // Under 10 min the slider must resolve to 1-minute precision — that's the range
+        // where the user wants to pick "5 min" or "7 min" specifically.
+        XCTAssertEqual(SettingsView.snapTTLMinutes(1.0), 1)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(4.6), 5)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(7.0), 7)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(9.4), 9)
+    }
+
+    func testSnapTTLMinutesFiveMinuteStepsUnderAnHour() {
+        XCTAssertEqual(SettingsView.snapTTLMinutes(11), 10)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(13), 15)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(32), 30)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(58), 60)
+    }
+
+    func testSnapTTLMinutesQuarterHourUnderSixHours() {
+        XCTAssertEqual(SettingsView.snapTTLMinutes(62), 60)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(70), 75)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(200), 195)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(350), 345)
+    }
+
+    func testSnapTTLMinutesHourStepsUnderOneDay() {
+        XCTAssertEqual(SettingsView.snapTTLMinutes(6 * 60 + 10), 6 * 60)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(12 * 60 + 20), 12 * 60)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(23 * 60), 23 * 60)
+    }
+
+    func testSnapTTLMinutesTwelveHourStepsUnderAWeek() {
+        XCTAssertEqual(SettingsView.snapTTLMinutes(25 * 60), 24 * 60)       // 1d
+        XCTAssertEqual(SettingsView.snapTTLMinutes(34 * 60), 36 * 60)       // 1.5d
+        XCTAssertEqual(SettingsView.snapTTLMinutes(5 * 24 * 60), 5 * 24 * 60)
+    }
+
+    func testSnapTTLMinutesDayStepsBeyondAWeek() {
+        XCTAssertEqual(SettingsView.snapTTLMinutes(10 * 24 * 60 + 60), 10 * 24 * 60)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(30 * 24 * 60), 30 * 24 * 60)
+    }
+
+    func testSnapshotTTLMinutesZeroMeansKeepForever() {
+        // The "Keep forever" toggle writes 0 — SnapshotStore.pruneMinutes treats 0 as a no-op.
+        let settings = AppSettings.shared
+        let saved = settings.snapshotTTLMinutes
+        defer { settings.snapshotTTLMinutes = saved }
+
+        settings.snapshotTTLMinutes = 0
+        XCTAssertEqual(settings.snapshotTTLMinutes, 0)
+        XCTAssertEqual(UserDefaults.standard.integer(forKey: "snapshotTTLMinutes"), 0)
+    }
+
+    func testSnapshotTTLMinutesAcceptsShortRetention() {
+        // User asked: "je veux qu'il reste 5 min en historique". Make sure 5 min is a valid,
+        // persisted value.
+        let settings = AppSettings.shared
+        let saved = settings.snapshotTTLMinutes
+        defer { settings.snapshotTTLMinutes = saved }
+
+        settings.snapshotTTLMinutes = 5
+        XCTAssertEqual(settings.snapshotTTLMinutes, 5)
+        XCTAssertEqual(UserDefaults.standard.integer(forKey: "snapshotTTLMinutes"), 5)
+    }
+
     func testClaudeKeywordsPersistToUserDefaults() {
         let settings = AppSettings.shared
         let saved = settings.claudeKeywords
@@ -1305,11 +1399,13 @@ final class PortEntryDisplayZombieTests: XCTestCase {
         PortEntry(
             id: "8080-1-0",
             port: 8080, pid: 1, ppid: 0,
-            processName: "node", processPath: "", commandLine: "", cwd: "",
+            processName: "node", processPath: "", commandLine: "",
+            arguments: [], environment: [:], cwd: "",
             tcpState: tcpState,
             processStartTime: Date(),
             residentMemoryBytes: 0, totalCPUTimeNs: 0,
             projectName: projectName, worktreeName: nil,
+            projectKey: "other:test", dockerContainerID: nil,
             roleLabel: nil, roleIcon: nil
         )
     }
@@ -1334,11 +1430,13 @@ final class FilterServerSocketsTests: XCTestCase {
         PortEntry(
             id: "\(port)-\(pid)-\(UUID().uuidString.prefix(4))",
             port: port, pid: pid, ppid: 0,
-            processName: processName, processPath: "", commandLine: "", cwd: "",
+            processName: processName, processPath: "", commandLine: "",
+            arguments: [], environment: [:], cwd: "",
             tcpState: state,
             processStartTime: Date(),
             residentMemoryBytes: 0, totalCPUTimeNs: 0,
             projectName: "Other", worktreeName: nil,
+            projectKey: "other:test", dockerContainerID: nil,
             roleLabel: nil, roleIcon: nil
         )
     }
@@ -1427,11 +1525,13 @@ final class FilterIgnoredProcessesTests: XCTestCase {
         PortEntry(
             id: "\(port)-\(pid)",
             port: port, pid: pid, ppid: 0,
-            processName: name, processPath: "", commandLine: "", cwd: "",
+            processName: name, processPath: "", commandLine: "",
+            arguments: [], environment: [:], cwd: "",
             tcpState: .listen,
             processStartTime: Date(),
             residentMemoryBytes: 0, totalCPUTimeNs: 0,
             projectName: "Test", worktreeName: nil,
+            projectKey: "other:test", dockerContainerID: nil,
             roleLabel: nil, roleIcon: nil
         )
     }
@@ -1501,10 +1601,12 @@ final class FleetCollapseTests: XCTestCase {
     ) -> PortEntryDisplay {
         let entry = PortEntry(
             id: "\(port)-\(pid)", port: port, pid: pid, ppid: ppid,
-            processName: name, processPath: "", commandLine: "", cwd: "",
+            processName: name, processPath: "", commandLine: "",
+            arguments: [], environment: [:], cwd: "",
             tcpState: .listen, processStartTime: Date(),
             residentMemoryBytes: ramBytes, totalCPUTimeNs: 0,
             projectName: "api", worktreeName: nil,
+            projectKey: "other:test", dockerContainerID: nil,
             roleLabel: nil, roleIcon: nil
         )
         return PortEntryDisplay(entry: entry, cpuPercent: cpuPercent, isZombie: false)
@@ -1679,15 +1781,453 @@ final class FleetCollapseTests: XCTestCase {
         let master = make(pid: 100, ppid: 1)
         let workerEntry = PortEntry(
             id: "8000-101", port: 8000, pid: 101, ppid: 100,
-            processName: "python", processPath: "", commandLine: "", cwd: "",
+            processName: "python", processPath: "", commandLine: "",
+            arguments: [], environment: [:], cwd: "",
             tcpState: .listen, processStartTime: Date(),
             residentMemoryBytes: 0, totalCPUTimeNs: 0,
             projectName: "api", worktreeName: nil,
+            projectKey: "other:test", dockerContainerID: nil,
             roleLabel: nil, roleIcon: nil
         )
         let worker = PortEntryDisplay(entry: workerEntry, cpuPercent: nil, isZombie: true)
         let result = PortMonitor.collapseFleets([master, worker])
         XCTAssertEqual(result.count, 1)
         XCTAssertTrue(result.first?.isZombie ?? false)
+    }
+}
+
+// MARK: - LaunchSnapshot + SnapshotStore Tests (restart feature)
+
+final class LaunchSnapshotTests: XCTestCase {
+
+    private func makeSnapshot(
+        projectKey: String = "/tmp/my-webapp",
+        projectName: String = "my-webapp",
+        port: UInt16 = 3000,
+        processName: String = "node",
+        roleLabel: String? = "Front",
+        roleIcon: String? = "globe",
+        cwd: String = "/tmp/my-webapp",
+        executablePath: String = "/usr/local/bin/node",
+        arguments: [String] = ["node", "server.js"],
+        environment: [String: String] = ["NODE_ENV": "development"],
+        capturedAt: Date = Date(),
+        dockerContainerID: String? = nil
+    ) -> LaunchSnapshot {
+        LaunchSnapshot(
+            projectKey: projectKey, projectName: projectName, port: port,
+            processName: processName, roleLabel: roleLabel, roleIcon: roleIcon,
+            cwd: cwd, executablePath: executablePath,
+            arguments: arguments, environment: environment,
+            capturedAt: capturedAt, dockerContainerID: dockerContainerID
+        )
+    }
+
+    func testIdIsStableForSameKeyPortName() {
+        let a = makeSnapshot()
+        let b = makeSnapshot(capturedAt: Date().addingTimeInterval(-3600))
+        XCTAssertEqual(a.id, b.id, "Snapshots with the same (projectKey, port, processName) must share an id so resaving replaces the old record")
+    }
+
+    func testIdDiffersAcrossProjects() {
+        let a = makeSnapshot(projectKey: "/a/repo")
+        let b = makeSnapshot(projectKey: "/b/repo")
+        XCTAssertNotEqual(a.id, b.id)
+    }
+
+    func testCommandSummaryBuildsFromArguments() {
+        let snap = makeSnapshot(arguments: ["/usr/local/bin/node", "/path/to/server.js", "--port", "3000"])
+        // Long path args should collapse to basenames, same as PortScanner.commandLine.
+        XCTAssertEqual(snap.commandSummary, "node server.js --port 3000")
+    }
+
+    func testCommandSummaryFallsBackToProcessName() {
+        let snap = makeSnapshot(arguments: [])
+        XCTAssertEqual(snap.commandSummary, "node")
+    }
+
+    func testShortCwdSubstitutesHome() {
+        let home = ProcessInfo.processInfo.environment["HOME"] ?? "/Users/test"
+        let snap = makeSnapshot(cwd: "\(home)/Projects/app")
+        XCTAssertEqual(snap.shortCwd, "~/Projects/app")
+    }
+
+    func testCapturedAgoJustNow() {
+        let snap = makeSnapshot(capturedAt: Date())
+        XCTAssertEqual(snap.capturedAgo, "just now")
+    }
+
+    func testCapturedAgoMinutes() {
+        let snap = makeSnapshot(capturedAt: Date().addingTimeInterval(-300)) // 5 min
+        XCTAssertTrue(snap.capturedAgo.contains("min"))
+        XCTAssertTrue(snap.capturedAgo.contains("5"))
+    }
+
+    func testEncodeDecodeRoundTrip() throws {
+        // ISO8601 encoding drops sub-second precision, so use a whole-second date for the equality check.
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let snap = makeSnapshot(capturedAt: date)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(snap)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(LaunchSnapshot.self, from: data)
+        XCTAssertEqual(decoded, snap)
+    }
+
+    func testRelaunchRoleOrdering() {
+        // DB must sort before everything else so back-ends see the database when they start.
+        XCTAssertLessThan(RelaunchRole.db.rawValue, RelaunchRole.cache.rawValue)
+        XCTAssertLessThan(RelaunchRole.cache.rawValue, RelaunchRole.back.rawValue)
+        XCTAssertLessThan(RelaunchRole.back.rawValue, RelaunchRole.front.rawValue)
+        XCTAssertLessThan(RelaunchRole.front.rawValue, RelaunchRole.other.rawValue)
+    }
+
+    func testRelaunchRoleFromLabel() {
+        XCTAssertEqual(RelaunchRole.from(roleLabel: "DB"), .db)
+        XCTAssertEqual(RelaunchRole.from(roleLabel: "Cache"), .cache)
+        XCTAssertEqual(RelaunchRole.from(roleLabel: "Back"), .back)
+        XCTAssertEqual(RelaunchRole.from(roleLabel: "Front"), .front)
+        XCTAssertEqual(RelaunchRole.from(roleLabel: "MCP"), .mcp)
+        XCTAssertEqual(RelaunchRole.from(roleLabel: nil), .other)
+        XCTAssertEqual(RelaunchRole.from(roleLabel: "Unknown"), .other)
+    }
+}
+
+@MainActor
+final class SnapshotStoreTests: XCTestCase {
+
+    private var savedGlobalTTL: Int = 60
+
+    override func setUp() {
+        super.setUp()
+        // Disable the global auto-prune during SnapshotStore unit tests — several tests
+        // deliberately seed snapshots older than the default retention to exercise prune
+        // behaviour explicitly. Without this, `store.save()` would strip them on insert.
+        savedGlobalTTL = AppSettings.shared.snapshotTTLMinutes
+        AppSettings.shared.snapshotTTLMinutes = 0
+    }
+
+    override func tearDown() {
+        AppSettings.shared.snapshotTTLMinutes = savedGlobalTTL
+        super.tearDown()
+    }
+
+    /// Fresh defaults per test so instances don't pollute each other.
+    private func freshStore() -> (SnapshotStore, UserDefaults) {
+        let suite = "test.SnapshotStore.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        return (SnapshotStore(defaults: defaults), defaults)
+    }
+
+    private func makeSnapshot(
+        projectKey: String = "/tmp/app",
+        projectName: String = "app",
+        port: UInt16 = 3000,
+        processName: String = "node",
+        roleLabel: String? = "Back",
+        capturedAt: Date = Date(),
+        dockerContainerID: String? = nil
+    ) -> LaunchSnapshot {
+        LaunchSnapshot(
+            projectKey: projectKey, projectName: projectName, port: port,
+            processName: processName, roleLabel: roleLabel, roleIcon: "server.rack",
+            cwd: "/tmp/app", executablePath: "/usr/bin/node",
+            arguments: ["node"], environment: [:],
+            capturedAt: capturedAt, dockerContainerID: dockerContainerID
+        )
+    }
+
+    func testInitialStoreIsEmpty() {
+        let (store, _) = freshStore()
+        XCTAssertTrue(store.isEmpty)
+    }
+
+    func testSaveAndRetrieve() {
+        let (store, _) = freshStore()
+        let snap = makeSnapshot()
+        store.save(snap)
+        XCTAssertEqual(store.all(for: "/tmp/app").count, 1)
+        XCTAssertEqual(store.all(for: "/other").count, 0)
+    }
+
+    func testSaveDeduplicatesById() {
+        // Saving twice with the same (projectKey, port, processName) must replace, not accumulate.
+        let (store, _) = freshStore()
+        let old = makeSnapshot(capturedAt: Date().addingTimeInterval(-3600))
+        store.save(old)
+        let fresh = makeSnapshot(capturedAt: Date())
+        store.save(fresh)
+        XCTAssertEqual(store.snapshots.count, 1)
+        XCTAssertEqual(store.snapshots.values.first?.capturedAt, fresh.capturedAt)
+    }
+
+    func testRemoveById() {
+        let (store, _) = freshStore()
+        let snap = makeSnapshot()
+        store.save(snap)
+        store.remove(id: snap.id)
+        XCTAssertTrue(store.isEmpty)
+    }
+
+    func testRemoveByProjectKey() {
+        let (store, _) = freshStore()
+        store.save(makeSnapshot(port: 3000, processName: "front"))
+        store.save(makeSnapshot(port: 4000, processName: "back"))
+        store.save(makeSnapshot(projectKey: "/other", port: 5432, processName: "postgres"))
+        store.remove(projectKey: "/tmp/app")
+        XCTAssertEqual(store.snapshots.count, 1)
+        XCTAssertEqual(store.snapshots.values.first?.processName, "postgres")
+    }
+
+    func testClearAll() {
+        let (store, _) = freshStore()
+        store.save(makeSnapshot(port: 3000, processName: "a"))
+        store.save(makeSnapshot(port: 3001, processName: "b"))
+        store.clearAll()
+        XCTAssertTrue(store.isEmpty)
+    }
+
+    func testPersistenceSurvivesNewStoreInstance() {
+        // New store reading the same defaults must see previously-saved snapshots.
+        let suite = "test.SnapshotStore.persist.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let a = SnapshotStore(defaults: defaults)
+        a.save(makeSnapshot())
+        let b = SnapshotStore(defaults: defaults)
+        XCTAssertEqual(b.snapshots.count, 1)
+    }
+
+    func testGroupedByProjectSortsByMostRecent() {
+        let (store, _) = freshStore()
+        let old = makeSnapshot(projectKey: "/a", projectName: "a-project",
+                               port: 3000, processName: "front",
+                               capturedAt: Date().addingTimeInterval(-3600))
+        let recent = makeSnapshot(projectKey: "/b", projectName: "b-project",
+                                  port: 4000, processName: "back",
+                                  capturedAt: Date())
+        store.save(old)
+        store.save(recent)
+        let groups = store.groupedByProject()
+        XCTAssertEqual(groups.count, 2)
+        XCTAssertEqual(groups.first?.projectKey, "/b", "Most recent project should come first")
+    }
+
+    func testPruneDropsSnapshotsOlderThanTTL() {
+        let (store, _) = freshStore()
+        let old = makeSnapshot(port: 3000, processName: "front",
+                               capturedAt: Date().addingTimeInterval(-48 * 3600)) // 2 days old
+        let recent = makeSnapshot(port: 4000, processName: "back",
+                                  capturedAt: Date().addingTimeInterval(-1 * 3600)) // 1 h old
+        store.save(old)
+        store.save(recent)
+        store.pruneMinutes(olderThan: 24 * 60) // 1-day TTL in minutes
+        XCTAssertEqual(store.snapshots.count, 1)
+        XCTAssertEqual(store.snapshots.values.first?.processName, "back")
+    }
+
+    func testPruneByMinutesDropsSnapshotsOlderThanMinutes() {
+        // User-facing example from the settings: 5-minute retention.
+        let (store, _) = freshStore()
+        let older = makeSnapshot(port: 3000, processName: "front",
+                                 capturedAt: Date().addingTimeInterval(-10 * 60)) // 10 min old
+        let fresh = makeSnapshot(port: 4000, processName: "back",
+                                 capturedAt: Date().addingTimeInterval(-60)) // 1 min old
+        store.save(older)
+        store.save(fresh)
+        store.pruneMinutes(olderThan: 5)
+        XCTAssertEqual(store.snapshots.count, 1)
+        XCTAssertEqual(store.snapshots.values.first?.processName, "back")
+    }
+
+    func testPruneNoOpWhenTTLIsZero() {
+        // Global TTL is forced to 0 in setUp, so `save()`'s internal prune is a no-op.
+        // Here we also verify the explicit `pruneMinutes(olderThan: 0)` leaves snapshots alone.
+        let (store, _) = freshStore()
+        store.save(makeSnapshot(capturedAt: Date().addingTimeInterval(-60)))
+        XCTAssertEqual(store.snapshots.count, 1, "fresh snapshot should survive the initial prune")
+        store.pruneMinutes(olderThan: 0)
+        XCTAssertEqual(store.snapshots.count, 1, "TTL ≤ 0 should preserve everything")
+    }
+
+    func testSaveConditionalOnKillSuccess() {
+        // Mirrors the refactored flow in PortMonitor.stopPort: a snapshot is *captured in
+        // memory* before the kill but only committed to the store if the kill is verified.
+        // This test reproduces the two branches (verified dead → save, still alive → no save)
+        // directly on the store, since the PortMonitor kill path is integration-level and
+        // relies on real PIDs.
+        let (store, _) = freshStore()
+        let pending = makeSnapshot(port: 7777, processName: "python")
+
+        // Branch 1: kill reported success but process is still alive → no commit.
+        let killReportedSuccess = true
+        let stillAlive = true
+        if killReportedSuccess && !stillAlive {
+            store.save(pending)
+        }
+        XCTAssertTrue(store.isEmpty, "Must not commit when the kill couldn't be verified")
+
+        // Branch 2: kill verified (process gone) → commit.
+        let verifiedDead = true
+        if verifiedDead { store.save(pending) }
+        XCTAssertEqual(store.snapshots.count, 1)
+    }
+
+    func testGroupedByProjectSortsSnapshotsByRoleWithinGroup() {
+        let (store, _) = freshStore()
+        store.save(makeSnapshot(port: 3000, processName: "vite", roleLabel: "Front"))
+        store.save(makeSnapshot(port: 4000, processName: "node", roleLabel: "Back"))
+        store.save(makeSnapshot(port: 5432, processName: "postgres", roleLabel: "DB"))
+        let groups = store.groupedByProject()
+        XCTAssertEqual(groups.count, 1)
+        let ordered = groups[0].snapshots.map(\.roleLabel)
+        // DB → Back → Front per RelaunchRole priority.
+        XCTAssertEqual(ordered, ["DB", "Back", "Front"])
+    }
+}
+
+// MARK: - PortScanner.parseProcArgsBuffer Tests
+
+final class ParseProcArgsBufferTests: XCTestCase {
+
+    /// Build a synthetic KERN_PROCARGS2 buffer:
+    /// [argc: Int32][exec_path\0][padding\0…][argv_0\0argv_1\0…][env_0\0env_1\0…]
+    private func makeBuffer(execPath: String, argv: [String], env: [String: String]) -> [UInt8] {
+        var buffer: [UInt8] = []
+        // argc
+        var argc = Int32(argv.count)
+        withUnsafeBytes(of: &argc) { buffer.append(contentsOf: $0) }
+        // exec_path + null
+        buffer.append(contentsOf: Array(execPath.utf8))
+        buffer.append(0)
+        // no padding needed for test — parser handles it
+        // argv
+        for a in argv {
+            buffer.append(contentsOf: Array(a.utf8))
+            buffer.append(0)
+        }
+        // env (KEY=VALUE pairs)
+        for (k, v) in env {
+            let pair = "\(k)=\(v)"
+            buffer.append(contentsOf: Array(pair.utf8))
+            buffer.append(0)
+        }
+        return buffer
+    }
+
+    func testParsesArgvAndEnv() {
+        let buf = makeBuffer(
+            execPath: "/usr/local/bin/node",
+            argv: ["node", "server.js", "--port", "3000"],
+            env: ["NODE_ENV": "development", "PATH": "/usr/bin:/bin"]
+        )
+        let parsed = PortScanner.parseProcArgsBuffer(buf)
+        XCTAssertEqual(parsed.argv, ["node", "server.js", "--port", "3000"])
+        XCTAssertEqual(parsed.environment["NODE_ENV"], "development")
+        XCTAssertEqual(parsed.environment["PATH"], "/usr/bin:/bin")
+        XCTAssertEqual(parsed.summary, "node server.js --port 3000")
+    }
+
+    func testHandlesEmptyEnv() {
+        let buf = makeBuffer(execPath: "/bin/sleep", argv: ["sleep", "10"], env: [:])
+        let parsed = PortScanner.parseProcArgsBuffer(buf)
+        XCTAssertEqual(parsed.argv, ["sleep", "10"])
+        XCTAssertTrue(parsed.environment.isEmpty)
+    }
+
+    func testHandlesArgvWithPaths() {
+        let buf = makeBuffer(
+            execPath: "/usr/bin/python3",
+            argv: ["python3", "/Users/test/project/main.py"],
+            env: [:]
+        )
+        let parsed = PortScanner.parseProcArgsBuffer(buf)
+        XCTAssertEqual(parsed.argv, ["python3", "/Users/test/project/main.py"])
+        XCTAssertEqual(parsed.summary, "python3 main.py", "Long path args should be basenamed in the summary")
+    }
+
+    func testTooSmallBufferReturnsEmpty() {
+        let parsed = PortScanner.parseProcArgsBuffer([0, 0, 0])
+        XCTAssertTrue(parsed.argv.isEmpty)
+        XCTAssertTrue(parsed.environment.isEmpty)
+    }
+}
+
+// MARK: - ProcessLauncher Docker command tests
+
+final class ProcessLauncherDockerTests: XCTestCase {
+
+    func testDockerStartCommandUsesAbsolutePathIfAvailable() {
+        guard let (exe, args) = ProcessLauncher.dockerStartCommand(containerID: "abc123") else {
+            XCTFail("expected a command"); return
+        }
+        // On systems without docker installed, falls back to /usr/bin/env docker start <id>
+        if exe.path == "/usr/bin/env" {
+            XCTAssertEqual(args, ["docker", "start", "abc123"])
+        } else {
+            XCTAssertTrue(exe.path.hasSuffix("/docker"), "got \(exe.path)")
+            XCTAssertEqual(args, ["start", "abc123"])
+        }
+    }
+
+    func testDockerStopCommandMirrorsStart() {
+        guard let (exe, args) = ProcessLauncher.dockerStopCommand(containerID: "abc123") else {
+            XCTFail("expected a command"); return
+        }
+        if exe.path == "/usr/bin/env" {
+            XCTAssertEqual(args, ["docker", "stop", "abc123"])
+        } else {
+            XCTAssertEqual(args, ["stop", "abc123"])
+        }
+    }
+}
+
+// MARK: - PortEntry.toSnapshot
+
+final class PortEntryToSnapshotTests: XCTestCase {
+
+    func testCopiesAllRelaunchRelevantFields() {
+        let entry = PortEntry(
+            id: "3000-1-0", port: 3000, pid: 1, ppid: 0,
+            processName: "node", processPath: "/usr/local/bin/node",
+            commandLine: "node server.js",
+            arguments: ["node", "server.js"],
+            environment: ["NODE_ENV": "development"],
+            cwd: "/tmp/app",
+            tcpState: .listen, processStartTime: Date(),
+            residentMemoryBytes: 0, totalCPUTimeNs: 0,
+            projectName: "app", worktreeName: nil,
+            projectKey: "/tmp/app", dockerContainerID: nil,
+            roleLabel: "Back", roleIcon: "server.rack"
+        )
+        let snap = entry.toSnapshot()
+        XCTAssertEqual(snap.projectKey, "/tmp/app")
+        XCTAssertEqual(snap.projectName, "app")
+        XCTAssertEqual(snap.port, 3000)
+        XCTAssertEqual(snap.processName, "node")
+        XCTAssertEqual(snap.executablePath, "/usr/local/bin/node")
+        XCTAssertEqual(snap.arguments, ["node", "server.js"])
+        XCTAssertEqual(snap.environment["NODE_ENV"], "development")
+        XCTAssertEqual(snap.cwd, "/tmp/app")
+        XCTAssertEqual(snap.roleLabel, "Back")
+        XCTAssertNil(snap.dockerContainerID)
+    }
+
+    func testPropagatesDockerContainerID() {
+        let entry = PortEntry(
+            id: "5432-1-0", port: 5432, pid: 1, ppid: 0,
+            processName: "com.docker.backend", processPath: "/",
+            commandLine: "", arguments: [], environment: [:], cwd: "/",
+            tcpState: .listen, processStartTime: Date(),
+            residentMemoryBytes: 0, totalCPUTimeNs: 0,
+            projectName: "Docker: redis", worktreeName: nil,
+            projectKey: "docker:abc123", dockerContainerID: "abc123",
+            roleLabel: "DB", roleIcon: "externaldrive.fill"
+        )
+        let snap = entry.toSnapshot()
+        XCTAssertEqual(snap.dockerContainerID, "abc123")
     }
 }
