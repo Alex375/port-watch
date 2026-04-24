@@ -316,11 +316,12 @@ struct PortRowView: View {
 
     private func roleBadge(icon: String, label: String) -> some View {
         HStack(spacing: 3) {
-            Image(systemName: icon)
-                .font(.system(size: 9))
-            Text(label.uppercased())
-                .font(.system(size: 9, weight: .bold))
-                .tracking(0.3)
+            roleIconView(icon: icon, size: 9)
+            if label != "Claude" {
+                Text(label.uppercased())
+                    .font(.system(size: 9, weight: .bold))
+                    .tracking(0.3)
+            }
         }
         .foregroundStyle(roleColor(label))
         .padding(.horizontal, 6)
@@ -329,6 +330,22 @@ struct PortRowView: View {
         .overlay(
             Capsule().strokeBorder(roleColor(label).opacity(0.25), lineWidth: 0.5)
         )
+    }
+
+    /// Render a role icon. Asset catalog names (e.g. "ClaudeLogo") render with their
+    /// native colors; anything else is treated as an SF Symbol and inherits the parent
+    /// `foregroundStyle`.
+    @ViewBuilder
+    private func roleIconView(icon: String, size: CGFloat) -> some View {
+        if NSImage(named: icon) != nil {
+            Image(icon)
+                .resizable()
+                .scaledToFit()
+                .frame(width: size + 2, height: size + 2)
+        } else {
+            Image(systemName: icon)
+                .font(.system(size: size))
+        }
     }
 
     private func warningPill(icon: String, text: String, color: Color) -> some View {
@@ -351,6 +368,7 @@ struct PortRowView: View {
         case "DB":    return Color(nsColor: .systemBrown)
         case "Cache": return Color(nsColor: .systemGray)
         case "MCP":   return Color(nsColor: .systemPurple)
+        case "Claude": return Color(red: 204/255, green: 124/255, blue: 94/255)
         default:      return Color.secondary
         }
     }

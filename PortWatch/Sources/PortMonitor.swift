@@ -198,7 +198,8 @@ final class PortMonitor {
             back: settings.backKeywords,
             db: settings.dbKeywords,
             dbProc: settings.dbProcessNames,
-            mcp: settings.mcpKeywords
+            mcp: settings.mcpKeywords,
+            claude: settings.claudeKeywords
         )
         let ignoredLowercased = Set(settings.ignoredProcesses.map { $0.lowercased() })
         let rawEntries = await Task.detached(priority: .utility) {

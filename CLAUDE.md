@@ -86,6 +86,7 @@ Default keywords:
 - **DB process names:** postgres, mysqld, mysql, mongod, mongos, redis-server, redis-sentinel
 - **Cache:** hardcoded for memcached, rabbitmq-server
 - **MCP:** mcp-server, mcp_server, fastmcp, modelcontextprotocol (matches process name and command line)
+- **Claude:** claude, claude-code, @anthropic-ai/claude-code, anthropic-ai/claude (matches process name and command line only — not folder, to avoid false positives on project folders named "claude-notes" etc.). Checked before MCP so the Claude CLI itself is tagged "Claude" even when it spawns MCP child processes.
 
 ### Kill Sequence
 
