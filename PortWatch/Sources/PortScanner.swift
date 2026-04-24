@@ -298,6 +298,36 @@ enum PortScanner: Sendable {
         }
     }
 
+    /// Lightweight "is any process LISTENing on this port right now?" check — used by
+    /// `PortMonitor.waitForPortReappearance` during relaunch verification.
+    ///
+    /// Walks all PIDs like `scanAllPorts`, but stops on the first LISTEN socket matching
+    /// `port` and skips every expensive per-pid enrichment (argv, cwd, project key,
+    /// CPU time, BSD info, role detection). Typical cost on a dev box: ~10-50 ms vs.
+    /// 200-500 ms for a full scan.
+    ///
+    /// Callers that also need to know *which* project/pid claimed the port should
+    /// follow up with a single `scanAllPorts` once the quick check returns true.
+    static func isPortListening(_ port: UInt16) -> Bool {
+        for pid in allPIDs() where pid > 0 {
+            let fds = fileDescriptors(for: pid)
+            if fds.isEmpty { continue }
+            for fd in fds {
+                guard fd.proc_fdtype == PROX_FDTYPE_SOCKET else { continue }
+                guard let sockInfo = socketInfo(pid: pid, fd: fd.proc_fd) else { continue }
+                let psi = sockInfo.psi
+                guard psi.soi_kind == 2 else { continue }
+                guard psi.soi_family == AF_INET || psi.soi_family == AF_INET6 else { continue }
+                let tcpInfo = psi.soi_proto.pri_tcp
+                let localPort = UInt16(bigEndian: UInt16(truncatingIfNeeded: tcpInfo.tcpsi_ini.insi_lport))
+                guard localPort == port else { continue }
+                let tcpState = TCPState(rawValue: tcpInfo.tcpsi_state) ?? .closed
+                if tcpState == .listen { return true }
+            }
+        }
+        return false
+    }
+
     static func scanAllPorts(keywords: RoleKeywords? = nil) -> [PortEntry] {
         ProjectDetector.refreshDockerContainers()
         let pids = allPIDs()

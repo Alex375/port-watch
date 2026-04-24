@@ -108,7 +108,8 @@ struct PortEntry: Identifiable, Sendable {
     let roleIcon: String?
 
     /// Build a `LaunchSnapshot` from this entry — used at kill-time to remember how to
-    /// relaunch the process later.
+    /// relaunch the process later. Environment variables are scrubbed here: the snapshot
+    /// set is persisted to UserDefaults plaintext and must never carry raw secrets.
     func toSnapshot(containerID: String? = nil) -> LaunchSnapshot {
         LaunchSnapshot(
             projectKey: projectKey,
@@ -120,7 +121,7 @@ struct PortEntry: Identifiable, Sendable {
             cwd: cwd,
             executablePath: processPath,
             arguments: arguments,
-            environment: environment,
+            environment: EnvScrubber.scrub(environment),
             capturedAt: Date(),
             dockerContainerID: containerID ?? dockerContainerID
         )

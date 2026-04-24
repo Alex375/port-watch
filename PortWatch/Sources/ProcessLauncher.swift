@@ -8,8 +8,8 @@ import Foundation
 ///   configuration that can't be reproduced from argv alone.
 /// - **Native**: spawn `snapshot.executablePath` with the captured `arguments[1...]`, `cwd`,
 ///   and `environment`. We drop argv[0] because `Process` re-injects `executableURL` as argv[0]
-///   itself. stdout/stderr are piped through a short-lived buffer so that if the launch fails
-///   fast (binary not found, missing shared lib, immediate crash) we can surface the error.
+///   itself. stdout/stderr are redirected to `/dev/null` so the child doesn't block on a pipe
+///   no one is reading, and so its logs don't bleed into PortWatch's own.
 enum ProcessLauncher {
 
     struct LaunchResult: Sendable {
@@ -50,11 +50,22 @@ enum ProcessLauncher {
         if !snapshot.environment.isEmpty {
             task.environment = snapshot.environment
         }
-        // Detach I/O so the child doesn't block on a pipe no one is reading, and so stdout
-        // doesn't bleed into PortWatch's own logs.
-        task.standardInput = FileHandle(forReadingAtPath: "/dev/null")
-        task.standardOutput = FileHandle(forWritingAtPath: "/dev/null")
-        task.standardError = FileHandle(forWritingAtPath: "/dev/null")
+
+        // Detach stdio. We own the parent FDs explicitly so they're closed after `run()`
+        // (posix_spawn dup'd them into the child). Leaking these FDs on every relaunch
+        // was the pre-fix behaviour — open 3 per restart, exhaust the FD limit over time.
+        let nullIn = FileHandle(forReadingAtPath: "/dev/null")
+        let nullOut = FileHandle(forWritingAtPath: "/dev/null")
+        let nullErr = FileHandle(forWritingAtPath: "/dev/null")
+        task.standardInput = nullIn as Any
+        task.standardOutput = nullOut as Any
+        task.standardError = nullErr as Any
+
+        defer {
+            try? nullIn?.close()
+            try? nullOut?.close()
+            try? nullErr?.close()
+        }
 
         do {
             try task.run()
@@ -68,38 +79,36 @@ enum ProcessLauncher {
 
     // MARK: - Docker
 
-    /// Build the argv for `docker start <id>`. Exposed for unit testing.
-    static func dockerStartCommand(containerID: String) -> (executable: URL, args: [String])? {
+    /// Build the argv for `docker <verb> <id>`. Exposed for unit testing.
+    static func dockerCommand(verb: String, containerID: String) -> (executable: URL, args: [String]) {
         let candidates = ["/usr/local/bin/docker", "/opt/homebrew/bin/docker"]
         for path in candidates where FileManager.default.fileExists(atPath: path) {
-            return (URL(fileURLWithPath: path), ["start", containerID])
+            return (URL(fileURLWithPath: path), [verb, containerID])
         }
         // Fallback: rely on PATH via /usr/bin/env
-        return (URL(fileURLWithPath: "/usr/bin/env"), ["docker", "start", containerID])
+        return (URL(fileURLWithPath: "/usr/bin/env"), ["docker", verb, containerID])
+    }
+
+    /// Build the argv for `docker start <id>`. Kept as a thin wrapper for callers that
+    /// only deal with one verb, and so existing tests keep compiling.
+    static func dockerStartCommand(containerID: String) -> (executable: URL, args: [String])? {
+        dockerCommand(verb: "start", containerID: containerID)
     }
 
     /// Build the argv for `docker stop <id>`.
     static func dockerStopCommand(containerID: String) -> (executable: URL, args: [String])? {
-        let candidates = ["/usr/local/bin/docker", "/opt/homebrew/bin/docker"]
-        for path in candidates where FileManager.default.fileExists(atPath: path) {
-            return (URL(fileURLWithPath: path), ["stop", containerID])
-        }
-        return (URL(fileURLWithPath: "/usr/bin/env"), ["docker", "stop", containerID])
+        dockerCommand(verb: "stop", containerID: containerID)
     }
 
     private static func startDockerContainer(id: String, processName: String) async -> LaunchResult {
-        guard let cmd = dockerStartCommand(containerID: id) else {
-            return LaunchResult(pid: 0, success: false, error: "docker CLI not found")
-        }
+        let cmd = dockerCommand(verb: "start", containerID: id)
         return await runDockerCommand(executable: cmd.executable, args: cmd.args, processName: processName)
     }
 
     /// Stop a docker container. Invoked from `PortMonitor.stopPort` as the kill step for
     /// container-backed entries (rather than SIGTERM on the daemon process).
     static func stopDockerContainer(id: String, processName: String) async -> LaunchResult {
-        guard let cmd = dockerStopCommand(containerID: id) else {
-            return LaunchResult(pid: 0, success: false, error: "docker CLI not found")
-        }
+        let cmd = dockerCommand(verb: "stop", containerID: id)
         return await runDockerCommand(executable: cmd.executable, args: cmd.args, processName: processName)
     }
 
@@ -109,24 +118,43 @@ enum ProcessLauncher {
         let task = Process()
         task.executableURL = executable
         task.arguments = args
+
+        // stdout → /dev/null. Previously this was `Pipe()` never read, which would
+        // deadlock `waitUntilExit()` if docker ever wrote more than the pipe buffer
+        // (64 KB). docker start/stop only prints the container id so it never hit the
+        // limit in practice, but the pattern was a latent bug.
+        let nullOut = FileHandle(forWritingAtPath: "/dev/null")
+        task.standardOutput = nullOut as Any
+
+        // stderr → pipe so we can surface docker's error message in the banner. Drained
+        // on a background task concurrent with `waitUntilExit`, so neither can block the
+        // other even if docker wrote > 64 KB of stderr.
         let errPipe = Pipe()
-        task.standardOutput = Pipe()
         task.standardError = errPipe
+
         do {
             try task.run()
         } catch {
+            try? nullOut?.close()
             return LaunchResult(pid: 0, success: false, error: error.localizedDescription)
         }
-        // Docker start/stop is synchronous — wait for the CLI to return. Use a detached task
-        // so we don't block the MainActor.
+
+        let errReader = errPipe.fileHandleForReading
+        async let errData: Data = Task.detached(priority: .userInitiated) {
+            errReader.readDataToEndOfFile()
+        }.value
+
         await Task.detached(priority: .userInitiated) {
             task.waitUntilExit()
         }.value
+
+        let collectedErr = await errData
+        try? nullOut?.close()
+
         if task.terminationStatus == 0 {
             return LaunchResult(pid: 0, success: true, error: nil)
         }
-        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-        let errMessage = String(data: errData, encoding: .utf8)?
+        let errMessage = String(data: collectedErr, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? "docker exited with status \(task.terminationStatus)"
         return LaunchResult(
             pid: 0, success: false,

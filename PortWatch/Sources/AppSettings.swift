@@ -76,6 +76,16 @@ final class AppSettings {
         didSet { UserDefaults.standard.set(snapshotTTLMinutes, forKey: "snapshotTTLMinutes") }
     }
 
+    // MARK: - Relaunch tuning
+
+    /// How long `PortMonitor.startSnapshot`/`startProject` poll for a restarted port
+    /// to reappear before giving up. Mirrors the SIGTERM grace period on the stop path.
+    nonisolated static let relaunchVerificationBudget: Duration = .seconds(6)
+    /// Interval between port checks during relaunch verification. Short enough to feel
+    /// snappy for fast binders (Go/Rust), long enough to avoid hammering libproc for a
+    /// slow starter (JVM, Python import chain).
+    nonisolated static let relaunchPollInterval: Duration = .milliseconds(200)
+
     private init() {
         let defaults = UserDefaults.standard
 
@@ -87,7 +97,13 @@ final class AppSettings {
         let defaultClaude = ["claude", "claude-code", "@anthropic-ai/claude-code", "anthropic-ai/claude"]
         let defaultIgnored: [String] = []
 
-        // Register defaults
+        // Run the legacy TTL migration BEFORE `register(defaults:)` — the registration
+        // domain sits on top of the user domain, so once `snapshotTTLMinutes` has a
+        // registered default, `defaults.object(forKey: "snapshotTTLMinutes")` returns
+        // the registered value, not nil, and the "never persisted" check below would
+        // otherwise be dead (silently losing any legacy `snapshotTTLHours` value).
+        Self.migrateLegacyTTLIfNeeded(defaults: defaults)
+
         defaults.register(defaults: [
             "cpuThreshold": 50.0,
             "ramThresholdMB": 500.0,
@@ -118,18 +134,30 @@ final class AppSettings {
         self.mcpKeywords = defaults.stringArray(forKey: "mcpKeywords") ?? defaultMCP
         self.claudeKeywords = defaults.stringArray(forKey: "claudeKeywords") ?? defaultClaude
         self.ignoredProcesses = defaults.stringArray(forKey: "ignoredProcesses") ?? defaultIgnored
+        self.snapshotTTLMinutes = defaults.integer(forKey: "snapshotTTLMinutes")
+    }
 
-        // Migrate the old `snapshotTTLHours` key to `snapshotTTLMinutes` on first launch
-        // after the unit change. We check the legacy key on the underlying defaults dict
-        // (object(forKey:)) to distinguish "never set" from "explicitly 0".
-        if defaults.object(forKey: "snapshotTTLMinutes") == nil,
-           let legacyHours = defaults.object(forKey: "snapshotTTLHours") as? Int {
-            self.snapshotTTLMinutes = legacyHours * 60
-            defaults.set(legacyHours * 60, forKey: "snapshotTTLMinutes")
-            defaults.removeObject(forKey: "snapshotTTLHours")
-        } else {
-            self.snapshotTTLMinutes = defaults.integer(forKey: "snapshotTTLMinutes")
+    /// UserDefaults flag set once the legacy TTL migration has run (successfully or not).
+    /// A dedicated key is used — rather than "is `snapshotTTLMinutes` persisted?" —
+    /// because `register(defaults:)` populates the process-wide *registration domain*
+    /// that `object(forKey:)` reads through, so "not persisted" becomes indistinguishable
+    /// from "registered default" after any `AppSettings` has been instantiated. The flag
+    /// is orthogonal to the registration domain.
+    nonisolated static let legacyTTLMigratedKey = "snapshotTTL.migratedFromHours"
+
+    /// One-shot migration from the pre-v2.2 `snapshotTTLHours` key to `snapshotTTLMinutes`.
+    /// Idempotent via `legacyTTLMigratedKey`. `nonisolated` because it only touches the
+    /// `UserDefaults` passed in — no actor state. Exposed `internal` (not private) so the
+    /// unit test suite can exercise it directly.
+    nonisolated static func migrateLegacyTTLIfNeeded(defaults: UserDefaults) {
+        if defaults.bool(forKey: legacyTTLMigratedKey) { return }
+        defaults.set(true, forKey: legacyTTLMigratedKey)
+
+        guard let legacyHours = defaults.object(forKey: "snapshotTTLHours") as? Int else {
+            return
         }
+        defaults.set(legacyHours * 60, forKey: "snapshotTTLMinutes")
+        defaults.removeObject(forKey: "snapshotTTLHours")
     }
 
     func resetToDefaults() {

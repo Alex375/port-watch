@@ -447,34 +447,44 @@ final class PortMonitor {
     func stopProject(_ group: ProjectGroup) async {
         setKillReport(nil)
 
-        // Capture snapshots in memory — one per row. Multiple ports on the same PID produce
-        // multiple snapshots, which is what we want (each port is independently relaunchable).
-        // Key them by pid so we can commit only the ones whose kill succeeds.
-        var pendingSnapshotsByPid: [Int32: [LaunchSnapshot]] = [:]
-        for display in group.entries {
-            pendingSnapshotsByPid[display.entry.pid, default: []].append(display.entry.toSnapshot())
-        }
-
         // Deduplicate by (pid, containerID) — a single PID listening on multiple ports
         // only needs one shutdown. A docker-backed row is tracked separately so we route
         // through `docker stop` for each unique container.
+        //
+        // Snapshots are keyed by a stable *target* identifier (the container id for
+        // docker rows, otherwise "pid:<pid>") rather than the raw pid. On macOS, Docker
+        // Desktop binds every container's port via the shared `com.docker.backend`
+        // daemon — so keying by pid alone would collide across containers and attribute
+        // snapshots to the wrong row.
         struct ShutdownTarget {
             let pid: Int32
             let port: UInt16
             let processName: String
             let containerID: String?
+            var snapshotKey: String {
+                if let cid = containerID, !cid.isEmpty { return "docker:\(cid)" }
+                return "pid:\(pid)"
+            }
         }
         var targets: [ShutdownTarget] = []
+        var pendingSnapshotsByTarget: [String: [LaunchSnapshot]] = [:]
         var seenPIDs = Set<Int32>()
         var seenContainerIDs = Set<String>()
         for display in group.entries {
             let entry = display.entry
+            let target: ShutdownTarget
             if let cid = entry.dockerContainerID, !cid.isEmpty {
+                target = ShutdownTarget(pid: entry.pid, port: entry.port, processName: entry.processName, containerID: cid)
+                // One shutdown per container; but every port belonging to the container
+                // still gets its own snapshot so each is independently relaunchable.
+                pendingSnapshotsByTarget[target.snapshotKey, default: []].append(entry.toSnapshot())
                 guard seenContainerIDs.insert(cid).inserted else { continue }
-                targets.append(ShutdownTarget(pid: entry.pid, port: entry.port, processName: entry.processName, containerID: cid))
+                targets.append(target)
             } else {
+                target = ShutdownTarget(pid: entry.pid, port: entry.port, processName: entry.processName, containerID: nil)
+                pendingSnapshotsByTarget[target.snapshotKey, default: []].append(entry.toSnapshot())
                 guard seenPIDs.insert(entry.pid).inserted else { continue }
-                targets.append(ShutdownTarget(pid: entry.pid, port: entry.port, processName: entry.processName, containerID: nil))
+                targets.append(target)
             }
             killingPIDs.insert(entry.pid)
         }
@@ -523,7 +533,7 @@ final class PortMonitor {
             } else {
                 verified = true
             }
-            if verified, let snaps = pendingSnapshotsByPid[target.pid] {
+            if verified, let snaps = pendingSnapshotsByTarget[target.snapshotKey] {
                 for snap in snaps { snapshotStore.save(snap) }
             }
         }
@@ -547,35 +557,37 @@ final class PortMonitor {
 
     // MARK: - Start (relaunch from snapshot)
 
-    /// How long `startSnapshot`/`startProject` poll for the port to reappear before giving
-    /// up. Mirrors the symmetry with the kill path: SIGTERM waits 4 s for the process to
-    /// exit, so we give the relaunch the same budget to bind its port.
-    static let relaunchVerificationBudget: Duration = .seconds(6)
-    /// Interval between port rescans during relaunch verification. Short enough to feel
-    /// snappy for fast binders (Go/Rust), long enough to avoid hammering libproc for a
-    /// slow starter (JVM, Python import chain).
-    static let relaunchPollInterval: Duration = .milliseconds(200)
-
     /// Poll up to `budget` for the given port to be bound by a process matching
     /// `projectKey`. Returns `true` as soon as it's observed, `false` on timeout.
-    /// The caller owns the rescan loop — we keep triggering `performScan()` so the
-    /// live `entries` stay up to date both in the UI and for this check.
+    ///
+    /// Polling uses the lightweight `PortScanner.isPortListening(_:)` check (skips argv,
+    /// cwd, project resolution, CPU time) — previously this ran a full `performScan()`
+    /// every 200 ms, costing 200–500 ms per scan on a busy dev box and turning the
+    /// verification window into a CPU hog. A full scan runs only once the quick check
+    /// succeeds (to confirm the listener matches `projectKey` and refresh the UI), and
+    /// once at the end on timeout.
     private func waitForPortReappearance(
         port: UInt16,
         projectKey: String,
-        budget: Duration = relaunchVerificationBudget,
-        interval: Duration = relaunchPollInterval
+        budget: Duration = AppSettings.relaunchVerificationBudget,
+        interval: Duration = AppSettings.relaunchPollInterval
     ) async -> Bool {
         let start = ContinuousClock.now
         while ContinuousClock.now - start < budget {
-            await performScan()
-            if entries.contains(where: { $0.entry.port == port && $0.entry.projectKey == projectKey }) {
-                return true
+            let isUp = await Task.detached(priority: .userInitiated) {
+                PortScanner.isPortListening(port)
+            }.value
+            if isUp {
+                // Confirm the listener is ours (same projectKey) via a full scan.
+                await performScan()
+                if entries.contains(where: { $0.entry.port == port && $0.entry.projectKey == projectKey }) {
+                    return true
+                }
+                // Port is bound by someone else — keep waiting.
             }
             try? await Task.sleep(for: interval)
         }
-        // One last scan after the budget — the final sleep may have pushed us just past
-        // the deadline while the port came up.
+        // Final full scan — the port may have come up just past the deadline.
         await performScan()
         return entries.contains { $0.entry.port == port && $0.entry.projectKey == projectKey }
     }
@@ -617,7 +629,7 @@ final class PortMonitor {
             ))
         } else {
             setKillReport(KillReport(
-                message: "Launched \(snapshot.processName) but :\(snapshot.port) did not come up within \(Int(Self.relaunchVerificationBudget.components.seconds))s — check the process logs",
+                message: "Launched \(snapshot.processName) but :\(snapshot.port) did not come up within \(Int(AppSettings.relaunchVerificationBudget.components.seconds))s — check the process logs",
                 isError: true
             ))
         }
@@ -671,26 +683,36 @@ final class PortMonitor {
             }
         }
 
-        // Verify each spawn actually bound its port. Poll up to the same budget as the
-        // single-snapshot path, with one rescan loop shared across all snapshots in this
-        // project. Snapshots whose ports come up get removed from the history; the rest
-        // are kept (failed launches or slow starters). Spinner stays lit per row until
-        // the port is verified up or the budget expires.
+        // Verify each spawn actually bound its port. One rescan loop shared across all
+        // snapshots in this project. Snapshots whose ports come up get removed from the
+        // history; the rest are kept (failed launches or slow starters). Spinner stays
+        // lit per row until the port is verified up or the budget expires.
+        //
+        // Each iteration uses the lightweight `PortScanner.isPortListening(_:)` check
+        // per pending port (skips argv/cwd/project enrichment) and only pays for a full
+        // `performScan()` when at least one port has come up — this is what confirms
+        // the listener belongs to the expected `projectKey` and updates the UI.
         let start = ContinuousClock.now
         var pendingPorts = Set(allSnapshots.map { $0.port })
-        while !pendingPorts.isEmpty && ContinuousClock.now - start < Self.relaunchVerificationBudget {
-            await performScan()
-            let runningNow = Set(entries.filter { $0.entry.projectKey == projectKey }.map { $0.entry.port })
-            let justCameUp = pendingPorts.intersection(runningNow)
-            if !justCameUp.isEmpty {
-                for snap in allSnapshots where justCameUp.contains(snap.port) {
-                    snapshotStore.remove(id: snap.id)
-                    launchingSnapshotIDs.remove(snap.id)
+        while !pendingPorts.isEmpty && ContinuousClock.now - start < AppSettings.relaunchVerificationBudget {
+            let portsToCheck = pendingPorts
+            let listeningPorts: Set<UInt16> = await Task.detached(priority: .userInitiated) {
+                Set(portsToCheck.filter { PortScanner.isPortListening($0) })
+            }.value
+            if !listeningPorts.isEmpty {
+                await performScan()
+                let runningNow = Set(entries.filter { $0.entry.projectKey == projectKey }.map { $0.entry.port })
+                let justCameUp = pendingPorts.intersection(runningNow)
+                if !justCameUp.isEmpty {
+                    for snap in allSnapshots where justCameUp.contains(snap.port) {
+                        snapshotStore.remove(id: snap.id)
+                        launchingSnapshotIDs.remove(snap.id)
+                    }
+                    pendingPorts.subtract(justCameUp)
                 }
-                pendingPorts.subtract(justCameUp)
             }
             if pendingPorts.isEmpty { break }
-            try? await Task.sleep(for: Self.relaunchPollInterval)
+            try? await Task.sleep(for: AppSettings.relaunchPollInterval)
         }
 
         // Clear any remaining spinners — the budget expired without these ports coming up.
@@ -706,7 +728,7 @@ final class PortMonitor {
                 isError: false
             ))
         } else if failures.isEmpty {
-            let budget = Int(Self.relaunchVerificationBudget.components.seconds)
+            let budget = Int(AppSettings.relaunchVerificationBudget.components.seconds)
             let missing = pendingPorts.sorted().map(String.init).joined(separator: ", ")
             setKillReport(KillReport(
                 message: "\(projectName): launched \(total), but :\(missing) did not come up within \(budget)s",

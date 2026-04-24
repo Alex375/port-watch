@@ -708,12 +708,13 @@ struct StoppedRowView: View {
 enum StoppedRowStyle {
     static func roleColor(_ label: String?) -> Color {
         switch label {
-        case "Front": return Color(nsColor: .systemBlue)
-        case "Back":  return Color(nsColor: .systemIndigo)
-        case "DB":    return Color(nsColor: .systemBrown)
-        case "Cache": return Color(nsColor: .systemGray)
-        case "MCP":   return Color(nsColor: .systemPurple)
-        default:      return Color.secondary
+        case "Front":  return Color(nsColor: .systemBlue)
+        case "Back":   return Color(nsColor: .systemIndigo)
+        case "DB":     return Color(nsColor: .systemBrown)
+        case "Cache":  return Color(nsColor: .systemGray)
+        case "MCP":    return Color(nsColor: .systemPurple)
+        case "Claude": return Color(red: 204/255, green: 124/255, blue: 94/255)
+        default:       return Color.secondary
         }
     }
 

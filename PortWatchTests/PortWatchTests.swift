@@ -2230,4 +2230,186 @@ final class PortEntryToSnapshotTests: XCTestCase {
         let snap = entry.toSnapshot()
         XCTAssertEqual(snap.dockerContainerID, "abc123")
     }
+
+    /// `toSnapshot` must route env vars through `EnvScrubber` so secret-looking values
+    /// never reach `SnapshotStore` (and therefore never reach UserDefaults plaintext).
+    func testScrubsEnvironmentSecrets() {
+        let entry = PortEntry(
+            id: "3000-1-0", port: 3000, pid: 1, ppid: 0,
+            processName: "node", processPath: "/usr/local/bin/node",
+            commandLine: "node server.js",
+            arguments: ["node", "server.js"],
+            environment: [
+                "NODE_ENV": "production",
+                "PORT": "3000",
+                "AWS_SECRET_ACCESS_KEY": "AKIA...",
+                "DATABASE_URL": "postgres://u:p@db:5432/x",
+                "GITHUB_TOKEN": "ghp_abc",
+                "OPENAI_API_KEY": "sk-...",
+                "HARMLESS_VALUE": "hello",
+            ],
+            cwd: "/tmp/app",
+            tcpState: .listen, processStartTime: Date(),
+            residentMemoryBytes: 0, totalCPUTimeNs: 0,
+            projectName: "app", worktreeName: nil,
+            projectKey: "/tmp/app", dockerContainerID: nil,
+            roleLabel: "Back", roleIcon: "server.rack"
+        )
+        let snap = entry.toSnapshot()
+        XCTAssertEqual(snap.environment["NODE_ENV"], "production")
+        XCTAssertEqual(snap.environment["PORT"], "3000")
+        XCTAssertEqual(snap.environment["HARMLESS_VALUE"], "hello")
+        let placeholder = EnvScrubber.redactedPlaceholder
+        XCTAssertEqual(snap.environment["AWS_SECRET_ACCESS_KEY"], placeholder)
+        XCTAssertEqual(snap.environment["DATABASE_URL"], placeholder)
+        XCTAssertEqual(snap.environment["GITHUB_TOKEN"], placeholder)
+        XCTAssertEqual(snap.environment["OPENAI_API_KEY"], placeholder)
+    }
+}
+
+// MARK: - EnvScrubber
+
+final class EnvScrubberTests: XCTestCase {
+
+    func testDetectsSubstringMatches() {
+        // Classic secret patterns, varying casing.
+        XCTAssertTrue(EnvScrubber.isSensitive("API_TOKEN"))
+        XCTAssertTrue(EnvScrubber.isSensitive("github_token"))
+        XCTAssertTrue(EnvScrubber.isSensitive("DB_PASSWORD"))
+        XCTAssertTrue(EnvScrubber.isSensitive("SignedCookie"))
+        XCTAssertTrue(EnvScrubber.isSensitive("SESSION_ID"))
+        XCTAssertTrue(EnvScrubber.isSensitive("JWT_HEADER"))
+        XCTAssertTrue(EnvScrubber.isSensitive("OAUTH_CREDENTIAL"))
+    }
+
+    func testDetectsPrefixMatches() {
+        XCTAssertTrue(EnvScrubber.isSensitive("AWS_REGION"))  // vendor-namespaced even if "REGION" alone isn't a secret
+        XCTAssertTrue(EnvScrubber.isSensitive("STRIPE_X"))
+        XCTAssertTrue(EnvScrubber.isSensitive("OPENAI_ORG_ID"))
+        XCTAssertTrue(EnvScrubber.isSensitive("GH_PAT_VALUE"))
+        XCTAssertTrue(EnvScrubber.isSensitive("SENTRY_RELEASE"))
+    }
+
+    func testDetectsExactMatches() {
+        XCTAssertTrue(EnvScrubber.isSensitive("DATABASE_URL"))
+        XCTAssertTrue(EnvScrubber.isSensitive("database_url"))
+        XCTAssertTrue(EnvScrubber.isSensitive("REDIS_URL"))
+        XCTAssertTrue(EnvScrubber.isSensitive("MONGODB_URI"))
+        XCTAssertTrue(EnvScrubber.isSensitive("DSN"))
+    }
+
+    func testSparesBenignVariables() {
+        XCTAssertFalse(EnvScrubber.isSensitive("NODE_ENV"))
+        XCTAssertFalse(EnvScrubber.isSensitive("PORT"))
+        XCTAssertFalse(EnvScrubber.isSensitive("PATH"))
+        XCTAssertFalse(EnvScrubber.isSensitive("HOME"))
+        XCTAssertFalse(EnvScrubber.isSensitive("LANG"))
+        XCTAssertFalse(EnvScrubber.isSensitive("USER"))
+    }
+
+    /// Keys are preserved, values redacted — some programs assert on env-key presence
+    /// and would crash if the key vanished entirely.
+    func testScrubReplacesValuesButKeepsKeys() {
+        let env = [
+            "AWS_SECRET_ACCESS_KEY": "real-value",
+            "NODE_ENV": "production",
+        ]
+        let scrubbed = EnvScrubber.scrub(env)
+        XCTAssertEqual(Set(scrubbed.keys), Set(env.keys))
+        XCTAssertEqual(scrubbed["AWS_SECRET_ACCESS_KEY"], EnvScrubber.redactedPlaceholder)
+        XCTAssertEqual(scrubbed["NODE_ENV"], "production")
+    }
+}
+
+// MARK: - ProcessLauncher.dockerCommand (unified verb builder)
+
+final class DockerCommandBuilderTests: XCTestCase {
+
+    func testStartAndStopProduceIdenticalShapeDifferentVerb() {
+        let start = ProcessLauncher.dockerCommand(verb: "start", containerID: "abc123")
+        let stop  = ProcessLauncher.dockerCommand(verb: "stop",  containerID: "abc123")
+
+        // Executable must be identical regardless of verb — same docker binary.
+        XCTAssertEqual(start.executable, stop.executable)
+        XCTAssertEqual(start.args.count, stop.args.count)
+
+        // The last argument is always the container id.
+        XCTAssertEqual(start.args.last, "abc123")
+        XCTAssertEqual(stop.args.last,  "abc123")
+
+        // The verb sits at args[0] (or args[1] on the /usr/bin/env fallback).
+        let startVerbIdx = start.args.firstIndex(of: "start")
+        let stopVerbIdx  = stop.args.firstIndex(of: "stop")
+        XCTAssertNotNil(startVerbIdx)
+        XCTAssertNotNil(stopVerbIdx)
+        XCTAssertEqual(startVerbIdx, stopVerbIdx)
+    }
+}
+
+// MARK: - AppSettings.migrateLegacyTTLIfNeeded
+
+final class AppSettingsTTLMigrationTests: XCTestCase {
+
+    /// Each test gets an isolated `UserDefaults` suite. Note: the registration domain
+    /// is process-wide, so `object(forKey:)` may read through to registered defaults
+    /// set by the global `AppSettings.shared` init — that's the exact bug the migration
+    /// flag guards against.
+    private func freshDefaults() -> (UserDefaults, String) {
+        let suite = "test.AppSettings.migration.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        return (defaults, suite)
+    }
+
+    /// Legacy `snapshotTTLHours` is translated to minutes and the old key is dropped.
+    /// Regression: prior to the fix, `register(defaults:)` shadowed the `object(forKey:)`
+    /// check and the migration never ran.
+    func testMigratesLegacyHoursToMinutes() {
+        let (defaults, suite) = freshDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        defaults.set(24, forKey: "snapshotTTLHours")
+        AppSettings.migrateLegacyTTLIfNeeded(defaults: defaults)
+
+        // Read back via `object(forKey:)` to see only the persisted value, bypassing
+        // the registration domain that `integer(forKey:)` falls through to.
+        XCTAssertEqual(defaults.object(forKey: "snapshotTTLMinutes") as? Int, 24 * 60)
+        XCTAssertNil(defaults.object(forKey: "snapshotTTLHours"),
+                     "Legacy key must be removed so migration is idempotent")
+        XCTAssertTrue(defaults.bool(forKey: AppSettings.legacyTTLMigratedKey),
+                      "Migration flag must be set so we don't run again")
+    }
+
+    /// Migration is idempotent — running twice produces the same result as once, and
+    /// the second run does not overwrite a user's subsequent explicit choice.
+    func testIsIdempotent() {
+        let (defaults, suite) = freshDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        defaults.set(5, forKey: "snapshotTTLHours") // 300 minutes
+        AppSettings.migrateLegacyTTLIfNeeded(defaults: defaults)
+        XCTAssertEqual(defaults.object(forKey: "snapshotTTLMinutes") as? Int, 300)
+
+        // User picks a different TTL post-migration
+        defaults.set(15, forKey: "snapshotTTLMinutes")
+
+        // Running migration again must not clobber the user's choice
+        AppSettings.migrateLegacyTTLIfNeeded(defaults: defaults)
+        XCTAssertEqual(defaults.object(forKey: "snapshotTTLMinutes") as? Int, 15)
+    }
+
+    func testNoOpOnFreshInstall() {
+        let (defaults, suite) = freshDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        AppSettings.migrateLegacyTTLIfNeeded(defaults: defaults)
+
+        // Inspect the persisted domain directly — `object(forKey:)` would read through
+        // the process-wide registration domain (which the global `AppSettings.shared`
+        // init may have already populated in an unrelated test).
+        let persisted = defaults.persistentDomain(forName: suite) ?? [:]
+        XCTAssertNil(persisted["snapshotTTLMinutes"], "No legacy value existed — nothing should be persisted for minutes")
+        XCTAssertNil(persisted["snapshotTTLHours"])
+        // The migration flag IS set (prevents re-checking next time).
+        XCTAssertEqual(persisted[AppSettings.legacyTTLMigratedKey] as? Bool, true)
+    }
 }
