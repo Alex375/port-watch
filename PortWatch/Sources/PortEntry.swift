@@ -103,7 +103,8 @@ struct PortEntry: Identifiable, Sendable {
         folder: String, process: String, cmd: String,
         frontKeywords: [String], backKeywords: [String],
         dbKeywords: [String], dbProcessNames: [String],
-        mcpKeywords: [String] = []
+        mcpKeywords: [String] = [],
+        claudeKeywords: [String] = []
     ) -> (label: String?, icon: String?) {
         let f = folder.lowercased()
         let p = process.lowercased()
@@ -112,6 +113,11 @@ struct PortEntry: Identifiable, Sendable {
         // DB
         if dbProcessNames.contains(p) || dbKeywords.contains(where: { f.contains($0) }) {
             return ("DB", "externaldrive.fill")
+        }
+        // Claude (detect before MCP so the Claude CLI itself is tagged "Claude"
+        // even when it also spawns MCP child processes).
+        if claudeKeywords.contains(where: { p.contains($0) || c.contains($0) }) {
+            return ("Claude", "sparkles")
         }
         // MCP
         if mcpKeywords.contains(where: { p.contains($0) || c.contains($0) || f.contains($0) }) {

@@ -40,7 +40,7 @@ Ever run `lsof -i -P | grep LISTEN` to figure out what's hogging port `3000`? Po
 </p>
 
 - **Project-aware** — groups ports by Docker container, Git repo, or known service
-- **Role tagging** — spot your frontend, backend, database, cache or MCP server at a glance
+- **Role tagging** — spot your frontend, backend, database, cache, MCP server or Claude CLI at a glance
 - **Silent by default** — no Dock icon, no popups, just the menubar
 - **Fast & native** — Swift 6 + `MenuBarExtra`, strict concurrency, `Sendable` everywhere
 - **Verified kills** — `SIGTERM` → poll → `SIGKILL` → confirm dead, with full error reports
@@ -86,6 +86,7 @@ Each process is tagged with a role based on **configurable keyword matching** ag
 | **DB** | `postgres` · `mysqld` · `mysql` · `mongod` · `redis-server` · `redis-sentinel` · `mongos` (+ folders `db`, `database`) |
 | **Cache** | `memcached` · `rabbitmq-server` |
 | **MCP** | `mcp-server` · `mcp_server` · `fastmcp` · `modelcontextprotocol` |
+| **Claude** | `claude` · `claude-code` · `@anthropic-ai/claude-code` · `anthropic-ai/claude` |
 
 > All keywords are editable in **Settings → Role detection keywords**.
 

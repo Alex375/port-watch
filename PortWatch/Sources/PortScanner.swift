@@ -238,6 +238,7 @@ enum PortScanner: Sendable {
         let db: [String]
         let dbProc: [String]
         let mcp: [String]
+        let claude: [String]
     }
 
     /// Keep only server-side sockets: every LISTEN entry, plus any CLOSE_WAIT/TIME_WAIT
@@ -397,7 +398,8 @@ enum PortScanner: Sendable {
                         folder: folder, process: name, cmd: cmd,
                         frontKeywords: kw.front, backKeywords: kw.back,
                         dbKeywords: kw.db, dbProcessNames: kw.dbProc,
-                        mcpKeywords: kw.mcp)
+                        mcpKeywords: kw.mcp,
+                        claudeKeywords: kw.claude)
                 } else {
                     role = (nil, nil)
                 }

@@ -389,6 +389,67 @@ final class PortEntryTests: XCTestCase {
         XCTAssertEqual(result.label, "MCP")
     }
 
+    // MARK: Claude detection
+
+    func testDetectRoleClaudeByProcessName() {
+        let result = PortEntry.detectRole(
+            folder: "project", process: "claude", cmd: "claude",
+            frontKeywords: ["front"], backKeywords: ["back"],
+            dbKeywords: ["db"], dbProcessNames: ["postgres"],
+            mcpKeywords: ["mcp-server"],
+            claudeKeywords: ["claude", "claude-code"]
+        )
+        XCTAssertEqual(result.label, "Claude")
+        XCTAssertEqual(result.icon, "sparkles")
+    }
+
+    func testDetectRoleClaudeByCmd() {
+        let result = PortEntry.detectRole(
+            folder: "project", process: "node", cmd: "node /usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+            frontKeywords: ["front"], backKeywords: ["back"],
+            dbKeywords: ["db"], dbProcessNames: ["postgres"],
+            mcpKeywords: ["mcp-server"],
+            claudeKeywords: ["claude", "claude-code", "@anthropic-ai/claude-code"]
+        )
+        XCTAssertEqual(result.label, "Claude")
+    }
+
+    func testDetectRoleClaudeTakesPriorityOverMCP() {
+        // A Claude process that also has "mcp" in its cmd should still be tagged "Claude"
+        let result = PortEntry.detectRole(
+            folder: "project", process: "claude", cmd: "claude --mcp-config",
+            frontKeywords: ["front"], backKeywords: ["back"],
+            dbKeywords: ["db"], dbProcessNames: ["postgres"],
+            mcpKeywords: ["mcp"],
+            claudeKeywords: ["claude"]
+        )
+        XCTAssertEqual(result.label, "Claude")
+    }
+
+    func testDetectRoleClaudeDoesNotMatchFolder() {
+        // Claude keywords only match process name and cmd — a folder called "claude-notes"
+        // with a generic node process shouldn't be tagged Claude.
+        let result = PortEntry.detectRole(
+            folder: "claude-notes", process: "node", cmd: "node index.js",
+            frontKeywords: ["front"], backKeywords: ["back"],
+            dbKeywords: ["db"], dbProcessNames: ["postgres"],
+            mcpKeywords: [],
+            claudeKeywords: ["claude"]
+        )
+        XCTAssertNotEqual(result.label, "Claude")
+    }
+
+    func testDetectRoleDBTakesPriorityOverClaude() {
+        let result = PortEntry.detectRole(
+            folder: "project", process: "postgres", cmd: "postgres claude",
+            frontKeywords: ["front"], backKeywords: ["back"],
+            dbKeywords: ["db"], dbProcessNames: ["postgres"],
+            mcpKeywords: [],
+            claudeKeywords: ["claude"]
+        )
+        XCTAssertEqual(result.label, "DB")
+    }
+
     // MARK: worktreeName
 
     func testWorktreeNameNilByDefault() {
@@ -636,13 +697,15 @@ final class PortScannerTests: XCTestCase {
             back: ["api", "server"],
             db: ["db"],
             dbProc: ["postgres"],
-            mcp: ["mcp-server"]
+            mcp: ["mcp-server"],
+            claude: ["claude"]
         )
         XCTAssertEqual(kw.front, ["front", "web"])
         XCTAssertEqual(kw.back, ["api", "server"])
         XCTAssertEqual(kw.db, ["db"])
         XCTAssertEqual(kw.dbProc, ["postgres"])
         XCTAssertEqual(kw.mcp, ["mcp-server"])
+        XCTAssertEqual(kw.claude, ["claude"])
     }
 
     func testProcessCwdForCurrentProcess() {
@@ -701,7 +764,8 @@ final class PortScannerTests: XCTestCase {
             back: ["api", "server"],
             db: ["db"],
             dbProc: ["postgres"],
-            mcp: ["mcp-server", "fastmcp"]
+            mcp: ["mcp-server", "fastmcp"],
+            claude: ["claude"]
         )
         let entries = PortScanner.scanAllPorts(keywords: kw)
         // Should not crash; entries may or may not have roles
@@ -1122,6 +1186,28 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.backKeywords, ["back", "api", "server", "uvicorn", "gunicorn", "flask", "django", "express", "fastify"])
         XCTAssertEqual(settings.dbKeywords, ["db", "database"])
         XCTAssertEqual(settings.dbProcessNames, ["postgres", "mysqld", "mysql", "mongod", "mongos", "redis-server", "redis-sentinel"])
+    }
+
+    func testClaudeKeywordsDefaults() {
+        let settings = AppSettings.shared
+        let saved = settings.claudeKeywords
+        defer { settings.claudeKeywords = saved }
+
+        settings.resetToDefaults()
+        XCTAssertEqual(
+            settings.claudeKeywords,
+            ["claude", "claude-code", "@anthropic-ai/claude-code", "anthropic-ai/claude"]
+        )
+    }
+
+    func testClaudeKeywordsPersistToUserDefaults() {
+        let settings = AppSettings.shared
+        let saved = settings.claudeKeywords
+        defer { settings.claudeKeywords = saved }
+
+        settings.claudeKeywords = ["claude-test"]
+        let stored = UserDefaults.standard.stringArray(forKey: "claudeKeywords")
+        XCTAssertEqual(stored, ["claude-test"])
     }
 
     func testSettingsPersistToUserDefaults() {

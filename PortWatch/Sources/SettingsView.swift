@@ -129,6 +129,7 @@ struct SettingsView: View {
             keywordRow(label: "DB folders", icon: "externaldrive.fill", color: Color(nsColor: .systemBrown), keywords: $settings.dbKeywords)
             keywordRow(label: "DB processes", icon: "externaldrive.fill", color: Color(nsColor: .systemBrown), keywords: $settings.dbProcessNames)
             keywordRow(label: "MCP", icon: "cpu", color: Color(nsColor: .systemPurple), keywords: $settings.mcpKeywords)
+            keywordRow(label: "Claude", icon: "sparkles", color: Color(nsColor: .systemOrange), keywords: $settings.claudeKeywords)
         }
     }
 

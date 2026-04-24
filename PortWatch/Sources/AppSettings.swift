@@ -60,6 +60,9 @@ final class AppSettings {
     var mcpKeywords: [String] {
         didSet { UserDefaults.standard.set(mcpKeywords, forKey: "mcpKeywords") }
     }
+    var claudeKeywords: [String] {
+        didSet { UserDefaults.standard.set(claudeKeywords, forKey: "claudeKeywords") }
+    }
     /// Process names (case-insensitive exact match) whose LISTEN ports should be
     /// hidden from the UI. Used for tool/IDE internals (Claude, Discord, PyCharm…)
     /// that open loopback servers for IPC but aren't user-facing services.
@@ -75,6 +78,7 @@ final class AppSettings {
         let defaultDB = ["db", "database"]
         let defaultDBProc = ["postgres", "mysqld", "mysql", "mongod", "mongos", "redis-server", "redis-sentinel"]
         let defaultMCP = ["mcp-server", "mcp_server", "fastmcp", "modelcontextprotocol"]
+        let defaultClaude = ["claude", "claude-code", "@anthropic-ai/claude-code", "anthropic-ai/claude"]
         let defaultIgnored: [String] = []
 
         // Register defaults
@@ -91,6 +95,7 @@ final class AppSettings {
             "dbKeywords": defaultDB,
             "dbProcessNames": defaultDBProc,
             "mcpKeywords": defaultMCP,
+            "claudeKeywords": defaultClaude,
             "ignoredProcesses": defaultIgnored,
         ])
 
@@ -104,6 +109,7 @@ final class AppSettings {
         self.dbKeywords = defaults.stringArray(forKey: "dbKeywords") ?? defaultDB
         self.dbProcessNames = defaults.stringArray(forKey: "dbProcessNames") ?? defaultDBProc
         self.mcpKeywords = defaults.stringArray(forKey: "mcpKeywords") ?? defaultMCP
+        self.claudeKeywords = defaults.stringArray(forKey: "claudeKeywords") ?? defaultClaude
         self.ignoredProcesses = defaults.stringArray(forKey: "ignoredProcesses") ?? defaultIgnored
     }
 
@@ -118,6 +124,7 @@ final class AppSettings {
         dbKeywords = ["db", "database"]
         dbProcessNames = ["postgres", "mysqld", "mysql", "mongod", "mongos", "redis-server", "redis-sentinel"]
         mcpKeywords = ["mcp-server", "mcp_server", "fastmcp", "modelcontextprotocol"]
+        claudeKeywords = ["claude", "claude-code", "@anthropic-ai/claude-code", "anthropic-ai/claude"]
         ignoredProcesses = []
     }
 }
