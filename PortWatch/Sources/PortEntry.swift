@@ -50,6 +50,10 @@ struct PortEntry: Identifiable, Sendable {
     let processName: String
     let processPath: String
     let commandLine: String
+    /// Full argv captured from KERN_PROCARGS2, preserved for relaunch.
+    let arguments: [String]
+    /// Environment captured from KERN_PROCARGS2, preserved for relaunch.
+    let environment: [String: String]
     let cwd: String
     let tcpState: TCPState
     let processStartTime: Date
@@ -57,6 +61,11 @@ struct PortEntry: Identifiable, Sendable {
     let totalCPUTimeNs: UInt64
     let projectName: String
     let worktreeName: String?
+    /// Stable project identity used as the key in `SnapshotStore`. See `ProjectDetector.ProjectInfo.key`.
+    let projectKey: String
+    /// Non-nil when this port is backed by a running docker container — relaunch goes
+    /// through `docker start/stop` instead of SIGTERM on the daemon process.
+    let dockerContainerID: String?
 
     var uptime: TimeInterval {
         Date().timeIntervalSince(processStartTime)
@@ -98,12 +107,33 @@ struct PortEntry: Identifiable, Sendable {
     /// SF Symbol for the role.
     let roleIcon: String?
 
+    /// Build a `LaunchSnapshot` from this entry — used at kill-time to remember how to
+    /// relaunch the process later. Environment variables are scrubbed here: the snapshot
+    /// set is persisted to UserDefaults plaintext and must never carry raw secrets.
+    func toSnapshot(containerID: String? = nil) -> LaunchSnapshot {
+        LaunchSnapshot(
+            projectKey: projectKey,
+            projectName: projectName,
+            port: port,
+            processName: processName,
+            roleLabel: roleLabel,
+            roleIcon: roleIcon,
+            cwd: cwd,
+            executablePath: processPath,
+            arguments: arguments,
+            environment: EnvScrubber.scrub(environment),
+            capturedAt: Date(),
+            dockerContainerID: containerID ?? dockerContainerID
+        )
+    }
+
     /// Compute role from keywords. Called at scan time with settings values.
     static func detectRole(
         folder: String, process: String, cmd: String,
         frontKeywords: [String], backKeywords: [String],
         dbKeywords: [String], dbProcessNames: [String],
-        mcpKeywords: [String] = []
+        mcpKeywords: [String] = [],
+        claudeKeywords: [String] = []
     ) -> (label: String?, icon: String?) {
         let f = folder.lowercased()
         let p = process.lowercased()
@@ -112,6 +142,11 @@ struct PortEntry: Identifiable, Sendable {
         // DB
         if dbProcessNames.contains(p) || dbKeywords.contains(where: { f.contains($0) }) {
             return ("DB", "externaldrive.fill")
+        }
+        // Claude (detect before MCP so the Claude CLI itself is tagged "Claude"
+        // even when it also spawns MCP child processes).
+        if claudeKeywords.contains(where: { p.contains($0) || c.contains($0) }) {
+            return ("Claude", "ClaudeLogo")
         }
         // MCP
         if mcpKeywords.contains(where: { p.contains($0) || c.contains($0) || f.contains($0) }) {

@@ -57,6 +57,16 @@ final class PortMonitor {
     var conflictPorts: Set<UInt16> = []
 
     let settings = AppSettings.shared
+    let snapshotStore = SnapshotStore.shared
+
+    /// PIDs / snapshot ids currently being launched — drives the spinner in the
+    /// "Recently stopped" section rows.
+    var launchingSnapshotIDs: Set<String> = []
+
+    /// Groups of recently-killed processes that can be relaunched, sorted most-recent-first.
+    var stoppedGroups: [StoppedProjectGroup] {
+        snapshotStore.groupedByProject()
+    }
 
     private var previousSamples: [Int32: CPUSample] = [:]
     private var knownPorts: Set<UInt16> = []
@@ -198,7 +208,8 @@ final class PortMonitor {
             back: settings.backKeywords,
             db: settings.dbKeywords,
             dbProc: settings.dbProcessNames,
-            mcp: settings.mcpKeywords
+            mcp: settings.mcpKeywords,
+            claude: settings.claudeKeywords
         )
         let ignoredLowercased = Set(settings.ignoredProcesses.map { $0.lowercased() })
         let rawEntries = await Task.detached(priority: .utility) {
@@ -303,27 +314,63 @@ final class PortMonitor {
         }
     }
 
-    // MARK: - Kill
+    // MARK: - Stop (kill + snapshot)
 
-    /// Kill the process behind a port row. If the row is a worker fleet, master and all
-    /// workers are killed in parallel and the result is reported as a single aggregated message.
-    func killPort(_ display: PortEntryDisplay) async {
+    /// Route a shutdown through `docker stop` if a container id is provided, otherwise
+    /// fall through to the SIGTERM → SIGKILL sequence. `nonisolated` so it can run in a
+    /// detached task. Preserves the `KillResult` shape so the existing report-building
+    /// code downstream stays untouched.
+    nonisolated static func shutdownOne(
+        pid: Int32, port: UInt16, processName: String, dockerContainerID: String?
+    ) async -> PortScanner.KillResult {
+        if let id = dockerContainerID, !id.isEmpty {
+            let r = await ProcessLauncher.stopDockerContainer(id: id, processName: processName)
+            return PortScanner.KillResult(
+                pid: pid, port: port, processName: processName,
+                success: r.success, error: r.error
+            )
+        }
+        return await PortScanner.killProcess(pid: pid, port: port, processName: processName)
+    }
+
+    /// Stop the process behind a port row — kills, verifies the process is gone, and only
+    /// then saves a restart snapshot. If the kill fails or the process is still alive, no
+    /// snapshot is recorded (the row will still appear in the live list on the next scan).
+    /// If the row is a worker fleet, master + workers are killed in parallel and aggregated
+    /// in a single banner message. Docker-backed rows route through `docker stop` instead.
+    func stopPort(_ display: PortEntryDisplay) async {
         setKillReport(nil)
 
         let master = display.entry
-        let workerPIDs = display.workerPIDs
+        // Capture the snapshot in memory BEFORE the kill (argv / env / cwd need to be read
+        // off the live process) but only persist it below once the kill is confirmed.
+        let pendingSnapshot = master.toSnapshot()
+
+        // Worker PIDs are only relevant for native fleets — for docker, the daemon process
+        // owns the port and `docker stop` is a single operation.
+        let containerID = master.dockerContainerID
+        let workerPIDs = (containerID?.isEmpty == false) ? [] : display.workerPIDs
         let allPIDs = [master.pid] + workerPIDs
         for pid in allPIDs { killingPIDs.insert(pid) }
 
-        // Kill master + workers in parallel.
+        let masterPid = master.pid
+        let masterPort = master.port
+        let masterName = master.processName
+
         let results = await Task.detached(priority: .userInitiated) {
             await withTaskGroup(of: PortScanner.KillResult.self) { group in
                 group.addTask {
-                    await PortScanner.killProcess(pid: master.pid, port: master.port, processName: master.processName)
+                    await Self.shutdownOne(
+                        pid: masterPid, port: masterPort,
+                        processName: masterName, dockerContainerID: containerID
+                    )
                 }
                 for wpid in workerPIDs {
                     group.addTask {
-                        await PortScanner.killProcess(pid: wpid, port: master.port, processName: master.processName)
+                        await Self.shutdownOne(
+                            pid: wpid, port: masterPort,
+                            processName: masterName, dockerContainerID: nil
+                        )
                     }
                 }
                 var collected: [PortScanner.KillResult] = []
@@ -334,23 +381,29 @@ final class PortMonitor {
 
         for pid in allPIDs { killingPIDs.remove(pid) }
 
-        // Single-process fast path — keep the original message format.
+        // Single-process / single-container fast path. Docker stops skip the `isAlive` check
+        // because the daemon process stays up even after the container stops — the port
+        // going away is what confirms success (picked up on the next scan).
+        let isDocker = containerID?.isEmpty == false
         if workerPIDs.isEmpty, let result = results.first {
+            let verb = isDocker ? "Stopped container" : "Killed"
+            let subject = "\(result.processName) on :\(result.port)"
             if result.success {
-                if PortScanner.isAlive(pid: master.pid) {
+                if !isDocker && PortScanner.isAlive(pid: master.pid) {
                     setKillReport(KillReport(
-                        message: "Kill of \(result.processName) on :\(result.port) (PID \(result.pid)) reported success but process is still alive",
+                        message: "Kill of \(subject) (PID \(result.pid)) reported success but process is still alive",
                         isError: true
                     ))
                 } else {
-                    setKillReport(KillReport(
-                        message: "Killed \(result.processName) on :\(result.port) (PID \(result.pid))",
-                        isError: false
-                    ))
+                    // Kill verified — now it's safe to commit the snapshot to the history.
+                    snapshotStore.save(pendingSnapshot)
+                    let suffix = isDocker ? "" : " (PID \(result.pid))"
+                    setKillReport(KillReport(message: "\(verb) \(subject)\(suffix)", isError: false))
                 }
             } else {
+                let action = isDocker ? "stop container" : "kill"
                 setKillReport(KillReport(
-                    message: "Failed to kill \(result.processName) on :\(result.port) (PID \(result.pid)): \(result.error ?? "unknown error")",
+                    message: "Failed to \(action) \(subject) (PID \(result.pid)): \(result.error ?? "unknown error")",
                     isError: true
                 ))
             }
@@ -358,7 +411,8 @@ final class PortMonitor {
             return
         }
 
-        // Fleet kill — aggregate report.
+        // Fleet kill — aggregate report. Snapshot is saved only if at least one PID
+        // (master or worker) was verified dead; otherwise nothing reached the history.
         var successes = 0
         var failures: [String] = []
         for r in results {
@@ -374,6 +428,9 @@ final class PortMonitor {
         }
         let total = successes + failures.count
         let label = "\(master.processName) on :\(master.port) (\(total) processes)"
+        if successes > 0 {
+            snapshotStore.save(pendingSnapshot)
+        }
         if failures.isEmpty {
             setKillReport(KillReport(message: "Killed \(label)", isError: false))
         } else {
@@ -384,39 +441,71 @@ final class PortMonitor {
         await performScan()
     }
 
-    /// Kill all processes in a project group in parallel and report results.
-    func killProject(_ group: ProjectGroup) async {
+    /// Stop all processes in a project group — snapshots are captured in memory first but
+    /// only persisted to the history for rows whose kill was verified (process dead, or
+    /// `docker stop` returned 0). Failed or still-alive PIDs produce no snapshot.
+    func stopProject(_ group: ProjectGroup) async {
         setKillReport(nil)
 
-        // Deduplicate by PID (multiple ports can belong to same process)
-        var uniqueEntries: [PortEntry] = []
+        // Deduplicate by (pid, containerID) — a single PID listening on multiple ports
+        // only needs one shutdown. A docker-backed row is tracked separately so we route
+        // through `docker stop` for each unique container.
+        //
+        // Snapshots are keyed by a stable *target* identifier (the container id for
+        // docker rows, otherwise "pid:<pid>") rather than the raw pid. On macOS, Docker
+        // Desktop binds every container's port via the shared `com.docker.backend`
+        // daemon — so keying by pid alone would collide across containers and attribute
+        // snapshots to the wrong row.
+        struct ShutdownTarget {
+            let pid: Int32
+            let port: UInt16
+            let processName: String
+            let containerID: String?
+            var snapshotKey: String {
+                if let cid = containerID, !cid.isEmpty { return "docker:\(cid)" }
+                return "pid:\(pid)"
+            }
+        }
+        var targets: [ShutdownTarget] = []
+        var pendingSnapshotsByTarget: [String: [LaunchSnapshot]] = [:]
         var seenPIDs = Set<Int32>()
+        var seenContainerIDs = Set<String>()
         for display in group.entries {
-            guard seenPIDs.insert(display.entry.pid).inserted else { continue }
-            uniqueEntries.append(display.entry)
-            killingPIDs.insert(display.entry.pid)
+            let entry = display.entry
+            let target: ShutdownTarget
+            if let cid = entry.dockerContainerID, !cid.isEmpty {
+                target = ShutdownTarget(pid: entry.pid, port: entry.port, processName: entry.processName, containerID: cid)
+                // One shutdown per container; but every port belonging to the container
+                // still gets its own snapshot so each is independently relaunchable.
+                pendingSnapshotsByTarget[target.snapshotKey, default: []].append(entry.toSnapshot())
+                guard seenContainerIDs.insert(cid).inserted else { continue }
+                targets.append(target)
+            } else {
+                target = ShutdownTarget(pid: entry.pid, port: entry.port, processName: entry.processName, containerID: nil)
+                pendingSnapshotsByTarget[target.snapshotKey, default: []].append(entry.toSnapshot())
+                guard seenPIDs.insert(entry.pid).inserted else { continue }
+                targets.append(target)
+            }
+            killingPIDs.insert(entry.pid)
         }
 
-        // Kill all in parallel
         let results = await withTaskGroup(of: PortScanner.KillResult.self) { taskGroup in
-            for entry in uniqueEntries {
+            for target in targets {
                 taskGroup.addTask {
-                    await PortScanner.killProcess(pid: entry.pid, port: entry.port, processName: entry.processName)
+                    await Self.shutdownOne(
+                        pid: target.pid, port: target.port,
+                        processName: target.processName,
+                        dockerContainerID: target.containerID
+                    )
                 }
             }
             var collected: [PortScanner.KillResult] = []
-            for await result in taskGroup {
-                collected.append(result)
-            }
+            for await result in taskGroup { collected.append(result) }
             return collected
         }
 
-        // Clear all killing indicators
-        for entry in uniqueEntries {
-            killingPIDs.remove(entry.pid)
-        }
+        for target in targets { killingPIDs.remove(target.pid) }
 
-        // Tally results
         var successes = 0
         var failures: [String] = []
         for result in results {
@@ -427,28 +516,227 @@ final class PortMonitor {
             }
         }
 
-        // Final verification: re-check each PID that was reported as killed
+        // Final verification for native kills — `docker stop` already blocks until done,
+        // so we only re-check PIDs that went through the kill() path. Only now do we commit
+        // snapshots for rows whose kill was verified.
         var zombieWarnings: [String] = []
-        for result in results where result.success {
-            if PortScanner.isAlive(pid: result.pid) {
-                zombieWarnings.append(":\(result.port) \(result.processName) (PID \(result.pid)) still alive after kill reported success")
+        for (target, result) in zip(targets, results) {
+            guard result.success else { continue }
+            let verified: Bool
+            if target.containerID == nil {
+                if PortScanner.isAlive(pid: result.pid) {
+                    zombieWarnings.append(":\(result.port) \(result.processName) (PID \(result.pid)) still alive after kill reported success")
+                    verified = false
+                } else {
+                    verified = true
+                }
+            } else {
+                verified = true
+            }
+            if verified, let snaps = pendingSnapshotsByTarget[target.snapshotKey] {
+                for snap in snaps { snapshotStore.save(snap) }
             }
         }
 
         let total = successes + failures.count
         if failures.isEmpty && zombieWarnings.isEmpty {
             setKillReport(KillReport(
-                message: "\(group.projectName): \(successes) process\(successes == 1 ? "" : "es") killed",
+                message: "\(group.projectName): \(successes) process\(successes == 1 ? "" : "es") stopped",
                 isError: false
             ))
         } else if !failures.isEmpty {
-            let msg = "\(group.projectName): \(successes)/\(total) killed, \(failures.count) failed\n" + failures.joined(separator: "\n")
+            let msg = "\(group.projectName): \(successes)/\(total) stopped, \(failures.count) failed\n" + failures.joined(separator: "\n")
             setKillReport(KillReport(message: msg, isError: true))
         } else {
-            let msg = "\(group.projectName): kills reported success but verification failed\n" + zombieWarnings.joined(separator: "\n")
+            let msg = "\(group.projectName): stops reported success but verification failed\n" + zombieWarnings.joined(separator: "\n")
             setKillReport(KillReport(message: msg, isError: true))
         }
 
         await performScan()
+    }
+
+    // MARK: - Start (relaunch from snapshot)
+
+    /// Poll up to `budget` for the given port to be bound by a process matching
+    /// `projectKey`. Returns `true` as soon as it's observed, `false` on timeout.
+    ///
+    /// Polling uses the lightweight `PortScanner.isPortListening(_:)` check (skips argv,
+    /// cwd, project resolution, CPU time) — previously this ran a full `performScan()`
+    /// every 200 ms, costing 200–500 ms per scan on a busy dev box and turning the
+    /// verification window into a CPU hog. A full scan runs only once the quick check
+    /// succeeds (to confirm the listener matches `projectKey` and refresh the UI), and
+    /// once at the end on timeout.
+    private func waitForPortReappearance(
+        port: UInt16,
+        projectKey: String,
+        budget: Duration = AppSettings.relaunchVerificationBudget,
+        interval: Duration = AppSettings.relaunchPollInterval
+    ) async -> Bool {
+        let start = ContinuousClock.now
+        while ContinuousClock.now - start < budget {
+            let isUp = await Task.detached(priority: .userInitiated) {
+                PortScanner.isPortListening(port)
+            }.value
+            if isUp {
+                // Confirm the listener is ours (same projectKey) via a full scan.
+                await performScan()
+                if entries.contains(where: { $0.entry.port == port && $0.entry.projectKey == projectKey }) {
+                    return true
+                }
+                // Port is bound by someone else — keep waiting.
+            }
+            try? await Task.sleep(for: interval)
+        }
+        // Final full scan — the port may have come up just past the deadline.
+        await performScan()
+        return entries.contains { $0.entry.port == port && $0.entry.projectKey == projectKey }
+    }
+
+    /// Relaunch a single snapshot. Spawns (or `docker start`s) the process, then polls
+    /// up to `relaunchVerificationBudget` for the port to actually become LISTEN before
+    /// declaring success. If the port never reappears within the budget we surface an
+    /// error — the snapshot stays in the history so the user can retry.
+    func startSnapshot(_ snapshot: LaunchSnapshot) async {
+        guard !launchingSnapshotIDs.contains(snapshot.id) else { return }
+        launchingSnapshotIDs.insert(snapshot.id)
+        setKillReport(nil)
+
+        let result = await ProcessLauncher.relaunch(snapshot)
+
+        if !result.success {
+            launchingSnapshotIDs.remove(snapshot.id)
+            setKillReport(KillReport(
+                message: "Failed to launch \(snapshot.processName) on :\(snapshot.port): \(result.error ?? "unknown error")",
+                isError: true
+            ))
+            return
+        }
+
+        // Spawn succeeded — now verify the port is actually bound. A successful spawn
+        // only means we got a PID back; the process could still fail on startup (missing
+        // config, port already taken, DB connection refused, etc.).
+        let reappeared = await waitForPortReappearance(
+            port: snapshot.port,
+            projectKey: snapshot.projectKey
+        )
+        launchingSnapshotIDs.remove(snapshot.id)
+
+        if reappeared {
+            snapshotStore.remove(id: snapshot.id)
+            setKillReport(KillReport(
+                message: "Launched \(snapshot.processName) on :\(snapshot.port)",
+                isError: false
+            ))
+        } else {
+            setKillReport(KillReport(
+                message: "Launched \(snapshot.processName) but :\(snapshot.port) did not come up within \(Int(AppSettings.relaunchVerificationBudget.components.seconds))s — check the process logs",
+                isError: true
+            ))
+        }
+    }
+
+    /// Relaunch every snapshot for a project, sequentially by role (DB → Cache → Back →
+    /// MCP → Front → Other) so that downstream services see their dependencies already
+    /// bound. Processes within the same role bucket run in parallel.
+    func startProject(projectKey: String) async {
+        let allSnapshots = snapshotStore.all(for: projectKey)
+        guard !allSnapshots.isEmpty else { return }
+        setKillReport(nil)
+        let projectName = allSnapshots.first?.projectName ?? projectKey
+
+        let buckets = Dictionary(grouping: allSnapshots) { RelaunchRole.from(roleLabel: $0.roleLabel) }
+        let sortedRoles = buckets.keys.sorted { $0.rawValue < $1.rawValue }
+
+        var successes = 0
+        var failures: [String] = []
+
+        // Mark every snapshot as "launching" up front — the per-row spinner must stay
+        // lit during both the spawn and the port-bind verification. IDs are cleared
+        // one-by-one below as each port comes up (or after the budget expires).
+        for snap in allSnapshots { launchingSnapshotIDs.insert(snap.id) }
+
+        for (index, role) in sortedRoles.enumerated() {
+            guard let bucket = buckets[role], !bucket.isEmpty else { continue }
+
+            let results = await withTaskGroup(of: (LaunchSnapshot, ProcessLauncher.LaunchResult).self) { taskGroup in
+                for snap in bucket {
+                    taskGroup.addTask { (snap, await ProcessLauncher.relaunch(snap)) }
+                }
+                var out: [(LaunchSnapshot, ProcessLauncher.LaunchResult)] = []
+                for await r in taskGroup { out.append(r) }
+                return out
+            }
+
+            for (snap, r) in results {
+                if r.success {
+                    successes += 1
+                } else {
+                    // Spawn itself failed — stop showing the spinner for this row now.
+                    launchingSnapshotIDs.remove(snap.id)
+                    failures.append(":\(snap.port) \(snap.processName) — \(r.error ?? "unknown error")")
+                }
+            }
+
+            // Only pause between role buckets, not after the last one.
+            if index < sortedRoles.count - 1 {
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+        }
+
+        // Verify each spawn actually bound its port. One rescan loop shared across all
+        // snapshots in this project. Snapshots whose ports come up get removed from the
+        // history; the rest are kept (failed launches or slow starters). Spinner stays
+        // lit per row until the port is verified up or the budget expires.
+        //
+        // Each iteration uses the lightweight `PortScanner.isPortListening(_:)` check
+        // per pending port (skips argv/cwd/project enrichment) and only pays for a full
+        // `performScan()` when at least one port has come up — this is what confirms
+        // the listener belongs to the expected `projectKey` and updates the UI.
+        let start = ContinuousClock.now
+        var pendingPorts = Set(allSnapshots.map { $0.port })
+        while !pendingPorts.isEmpty && ContinuousClock.now - start < AppSettings.relaunchVerificationBudget {
+            let portsToCheck = pendingPorts
+            let listeningPorts: Set<UInt16> = await Task.detached(priority: .userInitiated) {
+                Set(portsToCheck.filter { PortScanner.isPortListening($0) })
+            }.value
+            if !listeningPorts.isEmpty {
+                await performScan()
+                let runningNow = Set(entries.filter { $0.entry.projectKey == projectKey }.map { $0.entry.port })
+                let justCameUp = pendingPorts.intersection(runningNow)
+                if !justCameUp.isEmpty {
+                    for snap in allSnapshots where justCameUp.contains(snap.port) {
+                        snapshotStore.remove(id: snap.id)
+                        launchingSnapshotIDs.remove(snap.id)
+                    }
+                    pendingPorts.subtract(justCameUp)
+                }
+            }
+            if pendingPorts.isEmpty { break }
+            try? await Task.sleep(for: AppSettings.relaunchPollInterval)
+        }
+
+        // Clear any remaining spinners — the budget expired without these ports coming up.
+        for snap in allSnapshots where pendingPorts.contains(snap.port) {
+            launchingSnapshotIDs.remove(snap.id)
+        }
+
+        let verified = allSnapshots.count - pendingPorts.count
+        let total = successes + failures.count
+        if failures.isEmpty && pendingPorts.isEmpty {
+            setKillReport(KillReport(
+                message: "\(projectName): launched \(verified) process\(verified == 1 ? "" : "es")",
+                isError: false
+            ))
+        } else if failures.isEmpty {
+            let budget = Int(AppSettings.relaunchVerificationBudget.components.seconds)
+            let missing = pendingPorts.sorted().map(String.init).joined(separator: ", ")
+            setKillReport(KillReport(
+                message: "\(projectName): launched \(total), but :\(missing) did not come up within \(budget)s",
+                isError: true
+            ))
+        } else {
+            let msg = "\(projectName): launched \(successes)/\(total), \(failures.count) failed\n" + failures.joined(separator: "\n")
+            setKillReport(KillReport(message: msg, isError: true))
+        }
     }
 }

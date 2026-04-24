@@ -6,8 +6,16 @@ struct SettingsView: View {
     @Bindable var settings: AppSettings
     var onClose: () -> Void
     @State private var showUninstallConfirm = false
+    @State private var showClearSnapshotsConfirm = false
     @State private var updater = UpdateChecker.shared
+    @State private var snapshotStore = SnapshotStore.shared
     @State private var newKeyword: [String: String] = [:]
+    /// Remembered slider value used when "Keep forever" is toggled off — so the UI restores
+    /// the previous retention instead of snapping to the minimum.
+    @State private var lastFiniteTTLMinutes: Int = {
+        let current = AppSettings.shared.snapshotTTLMinutes
+        return current > 0 ? current : 60
+    }()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -18,6 +26,7 @@ struct SettingsView: View {
                     notificationsSection
                     detectionSection
                     ignoredProcessesSection
+                    restartHistorySection
                     aboutSection
                     dangerZone
                 }
@@ -129,6 +138,7 @@ struct SettingsView: View {
             keywordRow(label: "DB folders", icon: "externaldrive.fill", color: Color(nsColor: .systemBrown), keywords: $settings.dbKeywords)
             keywordRow(label: "DB processes", icon: "externaldrive.fill", color: Color(nsColor: .systemBrown), keywords: $settings.dbProcessNames)
             keywordRow(label: "MCP", icon: "cpu", color: Color(nsColor: .systemPurple), keywords: $settings.mcpKeywords)
+            keywordRow(label: "Claude", icon: "ClaudeLogo", color: Color(red: 204/255, green: 124/255, blue: 94/255), keywords: $settings.claudeKeywords)
         }
     }
 
@@ -149,6 +159,164 @@ struct SettingsView: View {
                 hint: "process name (e.g. claude)"
             )
         }
+    }
+
+    // MARK: - Restart history (TTL + clear)
+
+    private var restartHistorySection: some View {
+        settingsSection(icon: "clock.arrow.circlepath", title: "Restart history", color: .green) {
+            Text("Stopped processes are remembered so you can relaunch them later. Snapshots older than the retention window are discarded automatically.")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            ttlRow
+
+            let count = snapshotStore.snapshots.count
+            HStack(spacing: 6) {
+                Text("\(count) snapshot\(count == 1 ? "" : "s") stored")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if showClearSnapshotsConfirm {
+                    Button("Cancel") { showClearSnapshotsConfirm = false }
+                        .buttonStyle(.borderless)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Button {
+                        snapshotStore.clearAll()
+                        showClearSnapshotsConfirm = false
+                    } label: {
+                        Text("Clear all")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .controlSize(.small)
+                    .disabled(count == 0)
+                } else {
+                    Button {
+                        showClearSnapshotsConfirm = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "trash")
+                                .font(.system(size: 9))
+                            Text("Clear all")
+                                .font(.system(size: 11))
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(count == 0)
+                }
+            }
+        }
+    }
+
+    /// "Keep forever" toggle + logarithmic slider for retention across 4 orders of
+    /// magnitude (1 min → 30 days). A linear slider over that range would waste 99 % of
+    /// its travel on values no one picks. Log-spaced travel gives roughly equal precision
+    /// per decade: the first third covers minutes, the middle third hours, the last third
+    /// days. Storage stays in minutes; `0` means no auto-prune ("forever").
+    private var ttlRow: some View {
+        let sliderMinMinutes: Double = 1
+        let sliderMaxMinutes: Double = 30 * 24 * 60 // 43200
+        let logMin = log(sliderMinMinutes)
+        let logMax = log(sliderMaxMinutes)
+
+        let keepForeverBinding = Binding<Bool>(
+            get: { settings.snapshotTTLMinutes == 0 },
+            set: { newVal in
+                if newVal {
+                    if settings.snapshotTTLMinutes > 0 {
+                        lastFiniteTTLMinutes = settings.snapshotTTLMinutes
+                    }
+                    settings.snapshotTTLMinutes = 0
+                } else {
+                    settings.snapshotTTLMinutes = max(1, min(Int(sliderMaxMinutes), lastFiniteTTLMinutes))
+                }
+            }
+        )
+        let keepForever = keepForeverBinding.wrappedValue
+
+        // Slider works in log-space (units: ln(minutes)); we snap the converted value to
+        // nice integers so drag feedback feels discrete (5 min, 10, 15, 30, 1h, 2h, 1d…)
+        // instead of jittering between e.g. 42 and 43 min.
+        let logBinding = Binding<Double>(
+            get: {
+                let m = max(Int(sliderMinMinutes), keepForever ? lastFiniteTTLMinutes : settings.snapshotTTLMinutes)
+                return log(Double(m))
+            },
+            set: { newLog in
+                let snapped = Self.snapTTLMinutes(exp(newLog))
+                let clamped = max(Int(sliderMinMinutes), min(Int(sliderMaxMinutes), snapped))
+                lastFiniteTTLMinutes = clamped
+                if !keepForever { settings.snapshotTTLMinutes = clamped }
+            }
+        )
+
+        return VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: keepForeverBinding) {
+                Text("Keep forever")
+                    .font(.system(size: 11))
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Keep for")
+                        .font(.system(size: 11))
+                    Spacer()
+                    Text(formatTTL(Double(keepForever ? lastFiniteTTLMinutes : settings.snapshotTTLMinutes)))
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 58, alignment: .trailing)
+                }
+                Slider(value: logBinding, in: logMin...logMax)
+                    .controlSize(.mini)
+            }
+            .disabled(keepForever)
+            .opacity(keepForever ? 0.5 : 1.0)
+        }
+    }
+
+    /// Snap a raw minute count (typically produced by `exp()` from the log-slider) to a
+    /// unit-appropriate tick so drag feedback feels discrete across all four orders of
+    /// magnitude. Tiers: 1-minute precision < 10 min, 5-minute steps up to 1 h,
+    /// 15-minute steps up to 6 h, 1-hour steps up to 1 day, 12-hour steps up to 1 week,
+    /// then 1-day steps up to the 30-day ceiling.
+    static func snapTTLMinutes(_ raw: Double) -> Int {
+        let v = max(1.0, raw)
+        if v < 10 { return Int(v.rounded()) }
+        if v < 60 {
+            let m = Int(v.rounded())
+            return ((m + 2) / 5) * 5
+        }
+        if v < 6 * 60 {
+            let m = Int(v.rounded())
+            return ((m + 7) / 15) * 15
+        }
+        if v < 24 * 60 {
+            let m = Int(v.rounded())
+            return ((m + 30) / 60) * 60
+        }
+        let hours = Int((v / 60).rounded())
+        if hours < 7 * 24 { return ((hours + 6) / 12) * 12 * 60 }
+        return ((hours + 12) / 24) * 24 * 60
+    }
+
+    /// Convert TTL minutes into a compact human-readable label: "5 min", "1h", "23h", "7d", "30d".
+    private func formatTTL(_ minutes: Double) -> String {
+        let m = Int(minutes)
+        if m < 60 { return "\(m) min" }
+        let hours = m / 60
+        let minRem = m % 60
+        if hours < 24 {
+            return minRem == 0 ? "\(hours)h" : "\(hours)h\(minRem)"
+        }
+        let days = hours / 24
+        let hRem = hours % 24
+        return hRem == 0 ? "\(days)d" : "\(days)d\(hRem)h"
     }
 
     // MARK: - About
@@ -378,8 +546,7 @@ struct SettingsView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 9, weight: .medium))
+                iconView(icon: icon, size: 9)
                     .foregroundStyle(color)
                 Text(label)
                     .font(.system(size: 11, weight: .medium))
@@ -415,6 +582,21 @@ struct SettingsView: View {
         .padding(.vertical, 3)
         .background(color.opacity(0.12), in: Capsule())
         .overlay(Capsule().strokeBorder(color.opacity(0.25), lineWidth: 0.5))
+    }
+
+    /// Render an icon that may be either an asset catalog image (rendered with native colors)
+    /// or an SF Symbol (inherits the parent foregroundStyle).
+    @ViewBuilder
+    private func iconView(icon: String, size: CGFloat) -> some View {
+        if NSImage(named: icon) != nil {
+            Image(icon)
+                .resizable()
+                .scaledToFit()
+                .frame(width: size + 2, height: size + 2)
+        } else {
+            Image(systemName: icon)
+                .font(.system(size: size, weight: .medium))
+        }
     }
 
     private func addTagField(label: String, keywords: Binding<[String]>, hint: String) -> some View {
