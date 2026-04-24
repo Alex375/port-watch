@@ -212,11 +212,17 @@ struct SettingsView: View {
         }
     }
 
-    /// "Keep forever" toggle + slider for short-to-medium retention (1 min → 1 h).
-    /// Storage stays in minutes; `0` means no auto-prune ("forever"). The toggle drives
-    /// both the stored value and the slider's disabled state — flipping it off restores
-    /// the last slider value the user had set.
+    /// "Keep forever" toggle + logarithmic slider for retention across 4 orders of
+    /// magnitude (1 min → 30 days). A linear slider over that range would waste 99 % of
+    /// its travel on values no one picks. Log-spaced travel gives roughly equal precision
+    /// per decade: the first third covers minutes, the middle third hours, the last third
+    /// days. Storage stays in minutes; `0` means no auto-prune ("forever").
     private var ttlRow: some View {
+        let sliderMinMinutes: Double = 1
+        let sliderMaxMinutes: Double = 30 * 24 * 60 // 43200
+        let logMin = log(sliderMinMinutes)
+        let logMax = log(sliderMaxMinutes)
+
         let keepForeverBinding = Binding<Bool>(
             get: { settings.snapshotTTLMinutes == 0 },
             set: { newVal in
@@ -226,11 +232,28 @@ struct SettingsView: View {
                     }
                     settings.snapshotTTLMinutes = 0
                 } else {
-                    settings.snapshotTTLMinutes = max(1, min(60, lastFiniteTTLMinutes))
+                    settings.snapshotTTLMinutes = max(1, min(Int(sliderMaxMinutes), lastFiniteTTLMinutes))
                 }
             }
         )
         let keepForever = keepForeverBinding.wrappedValue
+
+        // Slider works in log-space (units: ln(minutes)); we snap the converted value to
+        // nice integers so drag feedback feels discrete (5 min, 10, 15, 30, 1h, 2h, 1d…)
+        // instead of jittering between e.g. 42 and 43 min.
+        let logBinding = Binding<Double>(
+            get: {
+                let m = max(Int(sliderMinMinutes), keepForever ? lastFiniteTTLMinutes : settings.snapshotTTLMinutes)
+                return log(Double(m))
+            },
+            set: { newLog in
+                let snapped = Self.snapTTLMinutes(exp(newLog))
+                let clamped = max(Int(sliderMinMinutes), min(Int(sliderMaxMinutes), snapped))
+                lastFiniteTTLMinutes = clamped
+                if !keepForever { settings.snapshotTTLMinutes = clamped }
+            }
+        )
+
         return VStack(alignment: .leading, spacing: 6) {
             Toggle(isOn: keepForeverBinding) {
                 Text("Keep forever")
@@ -239,24 +262,47 @@ struct SettingsView: View {
             .toggleStyle(.switch)
             .controlSize(.small)
 
-            sliderRow(
-                label: "Keep for",
-                value: Binding(
-                    get: { Double(keepForever ? lastFiniteTTLMinutes : settings.snapshotTTLMinutes) },
-                    set: { newVal in
-                        let clamped = max(1, min(60, Int(newVal)))
-                        lastFiniteTTLMinutes = clamped
-                        if !keepForever { settings.snapshotTTLMinutes = clamped }
-                    }
-                ),
-                range: 1...60,
-                step: 1,
-                format: { "\(Int($0)) min" },
-                valueWidth: 58
-            )
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Keep for")
+                        .font(.system(size: 11))
+                    Spacer()
+                    Text(formatTTL(Double(keepForever ? lastFiniteTTLMinutes : settings.snapshotTTLMinutes)))
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 58, alignment: .trailing)
+                }
+                Slider(value: logBinding, in: logMin...logMax)
+                    .controlSize(.mini)
+            }
             .disabled(keepForever)
             .opacity(keepForever ? 0.5 : 1.0)
         }
+    }
+
+    /// Snap a raw minute count (typically produced by `exp()` from the log-slider) to a
+    /// unit-appropriate tick so drag feedback feels discrete across all four orders of
+    /// magnitude. Tiers: 1-minute precision < 10 min, 5-minute steps up to 1 h,
+    /// 15-minute steps up to 6 h, 1-hour steps up to 1 day, 12-hour steps up to 1 week,
+    /// then 1-day steps up to the 30-day ceiling.
+    static func snapTTLMinutes(_ raw: Double) -> Int {
+        let v = max(1.0, raw)
+        if v < 10 { return Int(v.rounded()) }
+        if v < 60 {
+            let m = Int(v.rounded())
+            return ((m + 2) / 5) * 5
+        }
+        if v < 6 * 60 {
+            let m = Int(v.rounded())
+            return ((m + 7) / 15) * 15
+        }
+        if v < 24 * 60 {
+            let m = Int(v.rounded())
+            return ((m + 30) / 60) * 60
+        }
+        let hours = Int((v / 60).rounded())
+        if hours < 7 * 24 { return ((hours + 6) / 12) * 12 * 60 }
+        return ((hours + 12) / 24) * 24 * 60
     }
 
     /// Convert TTL minutes into a compact human-readable label: "5 min", "1h", "23h", "7d", "30d".

@@ -1231,6 +1231,46 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.snapshotTTLMinutes, 60, "Default TTL is 1 hour — max of the slider; use the toggle for indefinite retention")
     }
 
+    func testSnapTTLMinutesStaysPreciseBelowTenMinutes() {
+        // Under 10 min the slider must resolve to 1-minute precision — that's the range
+        // where the user wants to pick "5 min" or "7 min" specifically.
+        XCTAssertEqual(SettingsView.snapTTLMinutes(1.0), 1)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(4.6), 5)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(7.0), 7)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(9.4), 9)
+    }
+
+    func testSnapTTLMinutesFiveMinuteStepsUnderAnHour() {
+        XCTAssertEqual(SettingsView.snapTTLMinutes(11), 10)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(13), 15)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(32), 30)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(58), 60)
+    }
+
+    func testSnapTTLMinutesQuarterHourUnderSixHours() {
+        XCTAssertEqual(SettingsView.snapTTLMinutes(62), 60)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(70), 75)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(200), 195)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(350), 345)
+    }
+
+    func testSnapTTLMinutesHourStepsUnderOneDay() {
+        XCTAssertEqual(SettingsView.snapTTLMinutes(6 * 60 + 10), 6 * 60)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(12 * 60 + 20), 12 * 60)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(23 * 60), 23 * 60)
+    }
+
+    func testSnapTTLMinutesTwelveHourStepsUnderAWeek() {
+        XCTAssertEqual(SettingsView.snapTTLMinutes(25 * 60), 24 * 60)       // 1d
+        XCTAssertEqual(SettingsView.snapTTLMinutes(34 * 60), 36 * 60)       // 1.5d
+        XCTAssertEqual(SettingsView.snapTTLMinutes(5 * 24 * 60), 5 * 24 * 60)
+    }
+
+    func testSnapTTLMinutesDayStepsBeyondAWeek() {
+        XCTAssertEqual(SettingsView.snapTTLMinutes(10 * 24 * 60 + 60), 10 * 24 * 60)
+        XCTAssertEqual(SettingsView.snapTTLMinutes(30 * 24 * 60), 30 * 24 * 60)
+    }
+
     func testSnapshotTTLMinutesZeroMeansKeepForever() {
         // The "Keep forever" toggle writes 0 — SnapshotStore.pruneMinutes treats 0 as a no-op.
         let settings = AppSettings.shared
