@@ -638,9 +638,13 @@ final class PortMonitor {
         var successes = 0
         var failures: [String] = []
 
+        // Mark every snapshot as "launching" up front — the per-row spinner must stay
+        // lit during both the spawn and the port-bind verification. IDs are cleared
+        // one-by-one below as each port comes up (or after the budget expires).
+        for snap in allSnapshots { launchingSnapshotIDs.insert(snap.id) }
+
         for (index, role) in sortedRoles.enumerated() {
             guard let bucket = buckets[role], !bucket.isEmpty else { continue }
-            for snap in bucket { launchingSnapshotIDs.insert(snap.id) }
 
             let results = await withTaskGroup(of: (LaunchSnapshot, ProcessLauncher.LaunchResult).self) { taskGroup in
                 for snap in bucket {
@@ -651,12 +655,12 @@ final class PortMonitor {
                 return out
             }
 
-            for snap in bucket { launchingSnapshotIDs.remove(snap.id) }
-
             for (snap, r) in results {
                 if r.success {
                     successes += 1
                 } else {
+                    // Spawn itself failed — stop showing the spinner for this row now.
+                    launchingSnapshotIDs.remove(snap.id)
                     failures.append(":\(snap.port) \(snap.processName) — \(r.error ?? "unknown error")")
                 }
             }
@@ -670,7 +674,8 @@ final class PortMonitor {
         // Verify each spawn actually bound its port. Poll up to the same budget as the
         // single-snapshot path, with one rescan loop shared across all snapshots in this
         // project. Snapshots whose ports come up get removed from the history; the rest
-        // are kept (failed launches or slow starters).
+        // are kept (failed launches or slow starters). Spinner stays lit per row until
+        // the port is verified up or the budget expires.
         let start = ContinuousClock.now
         var pendingPorts = Set(allSnapshots.map { $0.port })
         while !pendingPorts.isEmpty && ContinuousClock.now - start < Self.relaunchVerificationBudget {
@@ -680,11 +685,17 @@ final class PortMonitor {
             if !justCameUp.isEmpty {
                 for snap in allSnapshots where justCameUp.contains(snap.port) {
                     snapshotStore.remove(id: snap.id)
+                    launchingSnapshotIDs.remove(snap.id)
                 }
                 pendingPorts.subtract(justCameUp)
             }
             if pendingPorts.isEmpty { break }
             try? await Task.sleep(for: Self.relaunchPollInterval)
+        }
+
+        // Clear any remaining spinners — the budget expired without these ports coming up.
+        for snap in allSnapshots where pendingPorts.contains(snap.port) {
+            launchingSnapshotIDs.remove(snap.id)
         }
 
         let verified = allSnapshots.count - pendingPorts.count

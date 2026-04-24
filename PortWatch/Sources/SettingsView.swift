@@ -10,6 +10,42 @@ struct SettingsView: View {
     @State private var updater = UpdateChecker.shared
     @State private var snapshotStore = SnapshotStore.shared
     @State private var newKeyword: [String: String] = [:]
+    @State private var ttlUnit: TTLUnit = .fromMinutes(AppSettings.shared.snapshotTTLMinutes)
+
+    /// Display unit for the "Keep for" control. Stored TTL stays in minutes; this just
+    /// changes how the user edits it.
+    enum TTLUnit: String, CaseIterable, Identifiable {
+        case minutes, hours, days
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .minutes: "minutes"
+            case .hours:   "hours"
+            case .days:    "days"
+            }
+        }
+        var minutesPerStep: Int {
+            switch self {
+            case .minutes: 1
+            case .hours:   60
+            case .days:    24 * 60
+            }
+        }
+        var maxValue: Int {
+            switch self {
+            case .minutes: 1440   // 24 h
+            case .hours:   720    // 30 d
+            case .days:    30     // 30 d
+            }
+        }
+        /// Pick the coarsest unit that still represents the TTL exactly, defaulting to
+        /// minutes for anything under 1 h.
+        static func fromMinutes(_ minutes: Int) -> TTLUnit {
+            if minutes > 0 && minutes % (24 * 60) == 0 { return .days }
+            if minutes > 0 && minutes % 60 == 0 { return .hours }
+            return .minutes
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -164,17 +200,7 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            sliderRow(
-                label: "Keep for",
-                value: Binding(
-                    get: { Double(settings.snapshotTTLMinutes) },
-                    set: { settings.snapshotTTLMinutes = Int($0) }
-                ),
-                range: 1...43200, // 1 minute → 30 days
-                step: 1,
-                format: formatTTL,
-                valueWidth: 58
-            )
+            ttlRow
 
             let count = snapshotStore.snapshots.count
             HStack(spacing: 6) {
@@ -213,6 +239,56 @@ struct SettingsView: View {
                     .disabled(count == 0)
                 }
             }
+        }
+    }
+
+    /// Stepper + unit picker for the TTL. Stored value stays in minutes; the unit picker
+    /// just changes editing granularity (1 min step when in "minutes", 1 h step when in
+    /// "hours", 1 d step when in "days"). Switching units preserves the current retention
+    /// as closely as the coarser unit allows.
+    private var ttlRow: some View {
+        let stepperBinding = Binding<Int>(
+            get: {
+                let m = settings.snapshotTTLMinutes
+                let step = ttlUnit.minutesPerStep
+                return max(1, min(ttlUnit.maxValue, (m + step / 2) / step))
+            },
+            set: { newVal in
+                settings.snapshotTTLMinutes = newVal * ttlUnit.minutesPerStep
+            }
+        )
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text("Keep for")
+                    .font(.system(size: 11))
+                Spacer()
+                Stepper(value: stepperBinding, in: 1...ttlUnit.maxValue) {
+                    Text("\(stepperBinding.wrappedValue)")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .frame(minWidth: 32, alignment: .trailing)
+                }
+                .labelsHidden()
+                .controlSize(.small)
+                Picker("", selection: $ttlUnit) {
+                    ForEach(TTLUnit.allCases) { unit in
+                        Text(unit.label).tag(unit)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .controlSize(.small)
+                .frame(width: 90)
+                .onChange(of: ttlUnit) { _, newUnit in
+                    // Preserve retention when the user switches units: recompute the stored
+                    // minute count from the stepper's current visible value.
+                    let current = stepperBinding.wrappedValue
+                    settings.snapshotTTLMinutes = min(newUnit.maxValue, max(1, current)) * newUnit.minutesPerStep
+                }
+            }
+            Text("Currently ≈ \(formatTTL(Double(settings.snapshotTTLMinutes)))")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
         }
     }
 
