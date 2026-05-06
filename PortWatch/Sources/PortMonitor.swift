@@ -5,6 +5,11 @@ import SwiftUI
 @Observable
 final class PortMonitor {
     var entries: [PortEntryDisplay] = []
+    /// Entries whose process name matches the user's "Ignored processes" list.
+    /// Kept separate from `entries` so they never reach fleet collapsing, conflict
+    /// detection or notifications — they exist solely so the UI can opt-in to
+    /// showing them via the "Show ignored" toggle (issue #26).
+    var ignoredEntries: [PortEntryDisplay] = []
     var lastScanDate: Date? = nil
 
     var portCount: Int { entries.count }
@@ -30,8 +35,35 @@ final class PortMonitor {
         return entries.filter { !ignored.contains($0.processName.lowercased()) }
     }
 
+    /// Split entries into (visible, ignored) buckets. `ignored` must be pre-lowercased.
+    /// Pure function — exposed for unit testing the "Show ignored" toggle wiring.
+    nonisolated static func partitionIgnoredProcesses(
+        _ entries: [PortEntry],
+        ignored: Set<String>
+    ) -> (visible: [PortEntry], ignored: [PortEntry]) {
+        guard !ignored.isEmpty else { return (entries, []) }
+        var visible: [PortEntry] = []
+        var hidden: [PortEntry] = []
+        for e in entries {
+            if ignored.contains(e.processName.lowercased()) {
+                hidden.append(e)
+            } else {
+                visible.append(e)
+            }
+        }
+        return (visible, hidden)
+    }
+
     var groupedEntries: [ProjectGroup] {
-        let grouped = Dictionary(grouping: entries) { $0.entry.projectName }
+        groupedEntries(includingIgnored: false)
+    }
+
+    /// Group entries by project. Pass `includingIgnored: true` to fold the
+    /// (normally hidden) `ignoredEntries` into the result — the "Show ignored"
+    /// toggle in the UI flips this on (issue #26).
+    func groupedEntries(includingIgnored: Bool) -> [ProjectGroup] {
+        let allDisplays = includingIgnored ? entries + ignoredEntries : entries
+        let grouped = Dictionary(grouping: allDisplays) { $0.entry.projectName }
         return grouped.map { ProjectGroup(projectName: $0.key, entries: $0.value) }
             .sorted { lhs, rhs in
                 // "Other" always goes last
@@ -39,6 +71,11 @@ final class PortMonitor {
                 if rhs.projectName == "Other" { return true }
                 return lhs.projectName.localizedCaseInsensitiveCompare(rhs.projectName) == .orderedAscending
             }
+    }
+
+    /// Whether `display` originates from the ignored bucket. Cheap O(n) by (pid, port).
+    func isIgnored(_ display: PortEntryDisplay) -> Bool {
+        ignoredEntries.contains { $0.entry.pid == display.entry.pid && $0.entry.port == display.entry.port }
     }
 
     /// Last kill result — shown to the user, never swallowed.
@@ -212,10 +249,12 @@ final class PortMonitor {
             claude: settings.claudeKeywords
         )
         let ignoredLowercased = Set(settings.ignoredProcesses.map { $0.lowercased() })
-        let rawEntries = await Task.detached(priority: .utility) {
+        let partitioned = await Task.detached(priority: .utility) {
             let all = PortScanner.scanAllPorts(keywords: kw)
-            return Self.filterIgnoredProcesses(all, ignored: ignoredLowercased)
+            return Self.partitionIgnoredProcesses(all, ignored: ignoredLowercased)
         }.value
+        let rawEntries = partitioned.visible
+        let rawIgnored = partitioned.ignored
 
         let now = Date()
         var displayEntries: [PortEntryDisplay] = []
@@ -297,6 +336,14 @@ final class PortMonitor {
         }
 
         self.entries = displayEntries
+        // Ignored entries are surfaced as plain displays — no CPU sampling, no
+        // zombie streaks, no fleet collapsing. The user opted them out of the
+        // main view; they exist purely so the "Show ignored" toggle has rows
+        // to render. Keeping them light avoids bloating the CPU sample map and
+        // zombie streak dictionaries with PIDs the user explicitly silenced.
+        self.ignoredEntries = rawIgnored.map { entry in
+            PortEntryDisplay(entry: entry, cpuPercent: nil, isZombie: false)
+        }
         self.previousSamples = newSamples
         self.closeWaitStreaks = newStreaks
         self.lastScanDate = now

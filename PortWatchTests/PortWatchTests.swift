@@ -1586,6 +1586,143 @@ final class FilterIgnoredProcessesTests: XCTestCase {
     }
 }
 
+// MARK: - partitionIgnoredProcesses Tests (#26 — Show ignored toggle)
+
+final class PartitionIgnoredProcessesTests: XCTestCase {
+
+    private func make(pid: Int32 = 100, port: UInt16 = 3000, name: String, project: String = "Test") -> PortEntry {
+        PortEntry(
+            id: "\(port)-\(pid)",
+            port: port, pid: pid, ppid: 0,
+            processName: name, processPath: "", commandLine: "",
+            arguments: [], environment: [:], cwd: "",
+            tcpState: .listen,
+            processStartTime: Date(),
+            residentMemoryBytes: 0, totalCPUTimeNs: 0,
+            projectName: project, worktreeName: nil,
+            projectKey: "other:\(project)", dockerContainerID: nil,
+            roleLabel: nil, roleIcon: nil
+        )
+    }
+
+    func testEmptyIgnoreListPutsEverythingInVisible() {
+        let entries = [make(name: "node"), make(name: "postgres")]
+        let result = PortMonitor.partitionIgnoredProcesses(entries, ignored: [])
+        XCTAssertEqual(result.visible.count, 2)
+        XCTAssertTrue(result.ignored.isEmpty)
+    }
+
+    func testPartitionsByExactName() {
+        let entries = [
+            make(port: 3000, name: "node"),
+            make(port: 5432, name: "postgres"),
+            make(port: 64975, name: "claude"),
+            make(port: 8080, name: "discord"),
+        ]
+        let result = PortMonitor.partitionIgnoredProcesses(entries, ignored: ["claude", "discord"])
+        XCTAssertEqual(result.visible.map(\.processName), ["node", "postgres"])
+        XCTAssertEqual(result.ignored.map(\.processName), ["claude", "discord"])
+    }
+
+    func testPartitionCaseInsensitiveMatch() {
+        // `ignored` set is pre-lowercased; entry process names may be mixed-case.
+        let entries = [make(name: "Claude"), make(name: "CLAUDE"), make(name: "NODE")]
+        let result = PortMonitor.partitionIgnoredProcesses(entries, ignored: ["claude"])
+        XCTAssertEqual(result.visible.count, 1)
+        XCTAssertEqual(result.visible.first?.processName, "NODE")
+        XCTAssertEqual(result.ignored.count, 2)
+    }
+
+    func testPartitionPreservesOrder() {
+        let entries = [
+            make(port: 3000, name: "node"),
+            make(port: 5432, name: "postgres"),
+            make(port: 64975, name: "claude"),
+            make(port: 8080, name: "redis-server"),
+        ]
+        let result = PortMonitor.partitionIgnoredProcesses(entries, ignored: ["claude"])
+        XCTAssertEqual(result.visible.map(\.port), [3000, 5432, 8080])
+        XCTAssertEqual(result.ignored.map(\.port), [64975])
+    }
+}
+
+@MainActor
+final class PortMonitorIgnoredEntriesTests: XCTestCase {
+
+    private func makeDisplay(pid: Int32, port: UInt16, name: String, project: String) -> PortEntryDisplay {
+        let entry = PortEntry(
+            id: "\(port)-\(pid)", port: port, pid: pid, ppid: 0,
+            processName: name, processPath: "", commandLine: "",
+            arguments: [], environment: [:], cwd: "",
+            tcpState: .listen, processStartTime: Date(),
+            residentMemoryBytes: 0, totalCPUTimeNs: 0,
+            projectName: project, worktreeName: nil,
+            projectKey: "other:\(project)", dockerContainerID: nil,
+            roleLabel: nil, roleIcon: nil
+        )
+        return PortEntryDisplay(entry: entry, cpuPercent: nil, isZombie: false)
+    }
+
+    func testGroupedEntriesExcludesIgnoredByDefault() {
+        let monitor = PortMonitor()
+        monitor.stopScanning()
+        monitor.entries = [
+            makeDisplay(pid: 1, port: 3000, name: "node", project: "front"),
+        ]
+        monitor.ignoredEntries = [
+            makeDisplay(pid: 2, port: 5000, name: "claude", project: "claude"),
+        ]
+        let groups = monitor.groupedEntries(includingIgnored: false)
+        let total = groups.reduce(0) { $0 + $1.entries.count }
+        XCTAssertEqual(total, 1)
+        XCTAssertTrue(groups.contains { $0.projectName == "front" })
+        XCTAssertFalse(groups.contains { $0.projectName == "claude" })
+    }
+
+    func testGroupedEntriesIncludesIgnoredWhenAsked() {
+        let monitor = PortMonitor()
+        monitor.stopScanning()
+        monitor.entries = [
+            makeDisplay(pid: 1, port: 3000, name: "node", project: "front"),
+        ]
+        monitor.ignoredEntries = [
+            makeDisplay(pid: 2, port: 5000, name: "claude", project: "claude"),
+        ]
+        let groups = monitor.groupedEntries(includingIgnored: true)
+        let total = groups.reduce(0) { $0 + $1.entries.count }
+        XCTAssertEqual(total, 2)
+        XCTAssertTrue(groups.contains { $0.projectName == "front" })
+        XCTAssertTrue(groups.contains { $0.projectName == "claude" })
+    }
+
+    func testIsIgnoredReturnsTrueForRowsInIgnoredBucket() {
+        let monitor = PortMonitor()
+        monitor.stopScanning()
+        let visible = makeDisplay(pid: 1, port: 3000, name: "node", project: "front")
+        let ignored = makeDisplay(pid: 2, port: 5000, name: "claude", project: "claude")
+        monitor.entries = [visible]
+        monitor.ignoredEntries = [ignored]
+        XCTAssertTrue(monitor.isIgnored(ignored))
+        XCTAssertFalse(monitor.isIgnored(visible))
+    }
+
+    func testComputedGroupedEntriesMatchesIncludingFalse() {
+        // The legacy `var groupedEntries` getter must still hide ignored rows so
+        // existing callers (settings/etc.) don't accidentally start surfacing them.
+        let monitor = PortMonitor()
+        monitor.stopScanning()
+        monitor.entries = [
+            makeDisplay(pid: 1, port: 3000, name: "node", project: "front"),
+        ]
+        monitor.ignoredEntries = [
+            makeDisplay(pid: 2, port: 5000, name: "claude", project: "claude"),
+        ]
+        let computed = monitor.groupedEntries
+        let total = computed.reduce(0) { $0 + $1.entries.count }
+        XCTAssertEqual(total, 1)
+    }
+}
+
 // MARK: - Fleet collapsing Tests (from #17 — worker fleet detection)
 
 final class FleetCollapseTests: XCTestCase {
