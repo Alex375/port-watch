@@ -84,6 +84,15 @@ final class AppSettings {
         didSet { UserDefaults.standard.set(historyEnabled, forKey: "historyEnabled") }
     }
 
+    /// When `true`, processes in `ignoredProcesses` are still rendered in the popover
+    /// (with a dimmed style + "ignored" badge) for ad-hoc inspection. Toggled from
+    /// Settings or via the ⌘I shortcut while the popover has focus. Persists across
+    /// launches so a user inspecting their ignored list keeps it visible until they
+    /// explicitly turn it back off.
+    var showIgnored: Bool {
+        didSet { UserDefaults.standard.set(showIgnored, forKey: "showIgnored") }
+    }
+
     // MARK: - Relaunch tuning
 
     /// How long `PortMonitor.startSnapshot`/`startProject` poll for a restarted port
@@ -129,6 +138,7 @@ final class AppSettings {
             "ignoredProcesses": defaultIgnored,
             "snapshotTTLMinutes": 60, // 1 hour — use the "Keep forever" toggle for indefinite retention
             "historyEnabled": true,
+            "showIgnored": false,
         ])
 
         self.cpuThreshold = defaults.double(forKey: "cpuThreshold")
@@ -145,6 +155,7 @@ final class AppSettings {
         self.ignoredProcesses = defaults.stringArray(forKey: "ignoredProcesses") ?? defaultIgnored
         self.snapshotTTLMinutes = defaults.integer(forKey: "snapshotTTLMinutes")
         self.historyEnabled = defaults.bool(forKey: "historyEnabled")
+        self.showIgnored = defaults.bool(forKey: "showIgnored")
     }
 
     /// UserDefaults flag set once the legacy TTL migration has run (successfully or not).
@@ -185,5 +196,6 @@ final class AppSettings {
         ignoredProcesses = []
         snapshotTTLMinutes = 60 // 1 hour — use the "Keep forever" toggle for indefinite retention
         historyEnabled = true
+        showIgnored = false
     }
 }

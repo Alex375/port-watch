@@ -106,7 +106,8 @@ Every time you stop a process from PortWatch, its invocation (executable, argv, 
 - **Per-port restart** — click the green `▶` on a snapshot to relaunch it. PortWatch waits for the port to bind and clears the snapshot from the list once it's listening again.
 - **Per-project restart** — click the project header's `▶` to relaunch every snapshot in that project sequentially by role: **DB → Cache → Back → MCP → Front**, so downstream services see their dependencies already bound (500 ms pause between roles).
 - **Docker containers** — stop/restart goes through `docker stop <id>` / `docker start <id>`, preserving volumes and network configuration.
-- **Retention** — snapshots are kept for **7 days** by default (configurable in Settings, 1h – 30d). A "Clear all" button wipes them on demand.
+- **Retention** — snapshots are kept for **1 hour** by default (configurable in Settings, 1 min – 30 d, or *Keep forever*). A "Clear all" button wipes them on demand.
+- **Disable persistence** — flip **Settings → Restart history → Enable history** off if you'd rather no snapshots ever transit via `UserDefaults`. The "Recently stopped" section disappears from the popover and `SnapshotStore.save` becomes a no-op.
 - **Caveats** — only processes stopped *from PortWatch* are snapshotted; a process killed from your terminal won't appear in Recently stopped. Relaunching spawns the binary directly (no shell wrapper), so tooling that only lives in shell init (nvm/pyenv shims) must already be resolved in the captured environment.
 
 ### Monitoring & Alerts
@@ -145,6 +146,8 @@ Hide process names that open **loopback servers for IPC** but aren't user-facing
 
 Matching is **case-insensitive exact match** on the process name. Configured in **Settings → Ignored processes**.
 
+- **Peek temporarily** — toggle **Show ignored in popover** in the same Settings section, or hit **⌘I** while the popover has focus, to fold ignored rows back into the project list with a dimmed style and an *ignored* pill. The shortcut is process-local (NSEvent monitor) and yields to text editing surfaces, so it never steals ⌘I from a focused TextField.
+
 ### Settings
 
 Inline, no separate window. Everything persists to `UserDefaults`.
@@ -159,8 +162,8 @@ Inline, no separate window. Everything persists to `UserDefaults`.
 - Refresh interval (3–30 seconds)
 - Notification preferences (per category, 3 levels)
 - Role detection keywords (editable tag chips)
-- **Ignored processes** list (editable tag chips)
-- **Restart history retention** (1 h – 30 d) + Clear all snapshots
+- **Ignored processes** list (editable tag chips) + **Show in popover** toggle (⌘I shortcut)
+- **Restart history** — enable/disable + retention (1 min – 30 d, or *Keep forever*) + Clear all snapshots
 - Version info + **one-click update checker**
 - Reset to defaults / Uninstall
 

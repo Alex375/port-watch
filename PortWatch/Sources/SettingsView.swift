@@ -159,6 +159,23 @@ struct SettingsView: View {
                 keywords: $settings.ignoredProcesses,
                 hint: "process name (e.g. claude)"
             )
+
+            Divider().opacity(0.4)
+
+            HStack(alignment: .center, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Show ignored in popover")
+                        .font(.system(size: 11))
+                    Text("Toggle quickly with ⌘I from the popover.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Toggle("", isOn: $settings.showIgnored)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .labelsHidden()
+            }
         }
     }
 
@@ -166,60 +183,94 @@ struct SettingsView: View {
 
     private var restartHistorySection: some View {
         settingsSection(icon: "clock.arrow.circlepath", title: "Restart history", color: .green) {
-            Text("Stopped processes are remembered so you can relaunch them later. Snapshots older than the retention window are discarded automatically.")
+            Text("Stopped processes are remembered so you can relaunch them later.")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             historyEnabledToggle
 
-            // Disabling-history confirmation banner. Mirrors the "Clear all" inline confirm
-            // pattern below — flipping the toggle ON → OFF stages the destructive action
-            // here so the user can back out before any snapshots are wiped.
+            // Disabling-history confirmation banner. Flipping the toggle ON → OFF
+            // stages the destructive action here so the user can back out before
+            // any snapshots are wiped.
             if showDisableHistoryConfirm {
                 disableHistoryConfirmBanner
             }
 
-            ttlRow
-                .disabled(!settings.historyEnabled)
-                .opacity(settings.historyEnabled ? 1.0 : 0.5)
+            // Retention controls only appear when history is on — hiding them rather
+            // than greying out keeps the section readable and removes the awkward
+            // pair of sibling switches (Enable history + Keep forever) at the same
+            // visual level.
+            if settings.historyEnabled {
+                retentionSubBlock
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
 
-            let count = snapshotStore.snapshots.count
-            HStack(spacing: 6) {
-                Text("\(count) snapshot\(count == 1 ? "" : "s") stored")
+            snapshotCountRow
+        }
+        .animation(.easeInOut(duration: 0.18), value: settings.historyEnabled)
+    }
+
+    /// Indented sub-card containing the TTL controls. Sits visually under the
+    /// master "Enable history" toggle.
+    private var retentionSubBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 5) {
+                Image(systemName: "timer")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                Text("Retention")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                    .tracking(0.4)
+                Spacer()
+                Text("Older snapshots are discarded.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+            ttlRow
+        }
+        .padding(10)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 7))
+    }
+
+    private var snapshotCountRow: some View {
+        let count = snapshotStore.snapshots.count
+        return HStack(spacing: 6) {
+            Text("\(count) snapshot\(count == 1 ? "" : "s") stored")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            Spacer()
+            if showClearSnapshotsConfirm {
+                Button("Cancel") { showClearSnapshotsConfirm = false }
+                    .buttonStyle(.borderless)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                Spacer()
-                if showClearSnapshotsConfirm {
-                    Button("Cancel") { showClearSnapshotsConfirm = false }
-                        .buttonStyle(.borderless)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                    Button {
-                        snapshotStore.clearAll()
-                        showClearSnapshotsConfirm = false
-                    } label: {
-                        Text("Clear all")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.red)
-                    .controlSize(.small)
-                    .disabled(count == 0)
-                } else {
-                    Button {
-                        showClearSnapshotsConfirm = true
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "trash")
-                                .font(.system(size: 9))
-                            Text("Clear all")
-                                .font(.system(size: 11))
-                        }
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(count == 0 || !settings.historyEnabled)
+                Button {
+                    snapshotStore.clearAll()
+                    showClearSnapshotsConfirm = false
+                } label: {
+                    Text("Clear all")
+                        .font(.system(size: 11, weight: .semibold))
                 }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .controlSize(.small)
+                .disabled(count == 0)
+            } else {
+                Button {
+                    showClearSnapshotsConfirm = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 9))
+                        Text("Clear all")
+                            .font(.system(size: 11))
+                    }
+                }
+                .buttonStyle(.borderless)
+                .disabled(count == 0)
             }
         }
     }

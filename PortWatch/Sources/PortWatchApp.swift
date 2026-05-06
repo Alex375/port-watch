@@ -35,10 +35,6 @@ struct MenuContentView: View {
     @State private var updater = UpdateChecker.shared
     @State private var isOtherCollapsed = true
     @State private var isStoppedCollapsed = true
-    /// Toggle for the "Show ignored" footer button (issue #26).
-    /// When true, processes from `AppSettings.ignoredProcesses` are folded back
-    /// into the grouped list with an "ignored" pill and dimmed style.
-    @State private var showIgnored = false
     /// Measured height of the port list content. Drives the ScrollView's frame height explicitly,
     /// so that expanding a row animates the container smoothly instead of oscillating between
     /// "fits" and "scrolls" states (would trigger scroll-bar flicker — issue #20).
@@ -145,7 +141,7 @@ struct MenuContentView: View {
             Divider()
 
             Group {
-                let visibleGroups = monitor.groupedEntries(includingIgnored: showIgnored)
+                let visibleGroups = monitor.groupedEntries(includingIgnored: monitor.settings.showIgnored)
                 if visibleGroups.isEmpty && monitor.stoppedGroups.isEmpty {
                     VStack(spacing: 12) {
                         ZStack {
@@ -219,16 +215,6 @@ struct MenuContentView: View {
             HStack(spacing: 0) {
                 FooterButton(icon: "gearshape", label: "Settings") {
                     showSettings.toggle()
-                }
-                Spacer()
-                FooterButton(
-                    icon: showIgnored ? "eye.slash" : "eye",
-                    label: showIgnored ? "Hide ignored" : "Show ignored",
-                    tint: .secondary,
-                    shortcutKey: ".",
-                    shortcutModifiers: .command
-                ) {
-                    withAnimation { showIgnored.toggle() }
                 }
                 Spacer()
                 if let version = appVersion {
@@ -382,7 +368,10 @@ struct MenuContentView: View {
                             .controlSize(.small)
                             .frame(width: 16, height: 16)
                     } else {
-                        FilledStopButton(
+                        HoverButton(
+                            icon: "power.circle.fill",
+                            color: .red.opacity(0.85),
+                            size: .system(size: 16),
                             help: "Stop all processes in \(group.projectName) (snapshots saved for restart)"
                         ) {
                             Task { await monitor.stopProject(group) }
@@ -565,16 +554,12 @@ struct FooterButton: View {
     let icon: String
     let label: String
     var tint: Color = .secondary
-    /// Optional keyboard shortcut. `nil` (default) leaves the button without
-    /// a shortcut — keeps existing call sites unchanged.
-    var shortcutKey: KeyEquivalent? = nil
-    var shortcutModifiers: EventModifiers = .command
     let action: () -> Void
 
     @State private var isHovered = false
 
     var body: some View {
-        let button = Button(action: action) {
+        Button(action: action) {
             HStack(spacing: 5) {
                 Image(systemName: icon)
                     .font(.system(size: 11, weight: .medium))
@@ -592,12 +577,6 @@ struct FooterButton: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
-
-        if let key = shortcutKey {
-            button.keyboardShortcut(key, modifiers: shortcutModifiers)
-        } else {
-            button
-        }
     }
 }
 
@@ -791,29 +770,3 @@ struct HoverButton: View {
     }
 }
 
-/// Compact filled-red stop button used in project headers. Inverts the older
-/// `power.circle.fill` ring style to a solid red Capsule with a white power
-/// glyph — visually heavier-as-destructive but more compact than the old icon.
-struct FilledStopButton: View {
-    var help: String = ""
-    let action: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "power")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(Color.red.opacity(isHovered ? 1.0 : 0.85), in: Capsule())
-                .animation(.easeInOut(duration: 0.15), value: isHovered)
-        }
-        .buttonStyle(.borderless)
-        .help(help)
-        .onHover { hovering in
-            isHovered = hovering
-        }
-    }
-}

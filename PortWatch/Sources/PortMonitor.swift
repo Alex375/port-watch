@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -219,8 +220,41 @@ final class PortMonitor {
         )
     }
 
+    /// Local NSEvent monitor token for the ⇧⌘I "show ignored" hotkey. Held so
+    /// the monitor lives as long as `PortMonitor` does. PortMonitor is owned by
+    /// the App's `@State` and lives for the full app lifetime, so we don't bother
+    /// removing it on deinit (the process exit reclaims the monitor).
+    private var showIgnoredHotkeyMonitor: Any?
+
     init() {
         startScanning()
+        installShowIgnoredHotkey()
+    }
+
+    /// Install a process-local key-down monitor that toggles `AppSettings.showIgnored`
+    /// on ⌘I. We use NSEvent rather than SwiftUI's `.keyboardShortcut` because the
+    /// `MenuBarExtra .window` panel often doesn't place hidden Buttons in the key
+    /// responder chain. ⌘I normally collides with the system "Italic" shortcut, so we
+    /// skip the intercept whenever an `NSText`-derived first responder (any TextField
+    /// or TextView) has focus — Cocoa then handles italic as usual on its plain text,
+    /// which is a no-op visually but keeps text editing predictable.
+    private func installShowIgnoredHotkey() {
+        guard showIgnoredHotkeyMonitor == nil else { return }
+        showIgnoredHotkeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard mods == [.command],
+                  event.charactersIgnoringModifiers?.lowercased() == "i" else {
+                return event
+            }
+            // Don't steal ⌘I from text editing surfaces.
+            if event.window?.firstResponder is NSText {
+                return event
+            }
+            Task { @MainActor in
+                withAnimation { AppSettings.shared.showIgnored.toggle() }
+            }
+            return nil // consume — popover-level ⌘I toggles ignored visibility
+        }
     }
 
     func startScanning() {
