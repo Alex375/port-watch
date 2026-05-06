@@ -169,7 +169,7 @@ struct MenuContentView: View {
                             ForEach(monitor.groupedEntries, id: \.projectName) { group in
                                 projectSection(group)
                             }
-                            if !monitor.stoppedGroups.isEmpty {
+                            if !monitor.stoppedGroups.isEmpty && monitor.settings.historyEnabled {
                                 if !monitor.entries.isEmpty {
                                     Divider().opacity(0.4)
                                 }
@@ -362,10 +362,7 @@ struct MenuContentView: View {
                             .controlSize(.small)
                             .frame(width: 16, height: 16)
                     } else {
-                        HoverButton(
-                            icon: "power.circle.fill",
-                            color: .red.opacity(0.85),
-                            size: .system(size: 16),
+                        FilledStopButton(
                             help: "Stop all processes in \(group.projectName) (snapshots saved for restart)"
                         ) {
                             Task { await monitor.stopProject(group) }
@@ -753,6 +750,33 @@ struct HoverButton: View {
                 .font(size)
                 .foregroundStyle(color.opacity(isHovered ? 1.0 : 0.5))
                 .scaleEffect(isHovered ? 1.2 : 1.0)
+                .animation(.easeInOut(duration: 0.15), value: isHovered)
+        }
+        .buttonStyle(.borderless)
+        .help(help)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+    }
+}
+
+/// Compact filled-red stop button used in project headers. Inverts the older
+/// `power.circle.fill` ring style to a solid red Capsule with a white power
+/// glyph — visually heavier-as-destructive but more compact than the old icon.
+struct FilledStopButton: View {
+    var help: String = ""
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "power")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color.red.opacity(isHovered ? 1.0 : 0.85), in: Capsule())
                 .animation(.easeInOut(duration: 0.15), value: isHovered)
         }
         .buttonStyle(.borderless)

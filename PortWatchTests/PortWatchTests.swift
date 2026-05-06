@@ -1282,6 +1282,31 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(UserDefaults.standard.integer(forKey: "snapshotTTLMinutes"), 0)
     }
 
+    func testHistoryEnabledDefaultsToTrue() {
+        // Master switch must default ON so existing users keep the current behaviour
+        // after upgrading. resetToDefaults() must also re-enable it.
+        let settings = AppSettings.shared
+        let saved = settings.historyEnabled
+        defer { settings.historyEnabled = saved }
+
+        settings.historyEnabled = false
+        settings.resetToDefaults()
+        XCTAssertTrue(settings.historyEnabled, "resetToDefaults must re-enable history")
+    }
+
+    func testHistoryEnabledPersistsToUserDefaults() {
+        let settings = AppSettings.shared
+        let saved = settings.historyEnabled
+        defer { settings.historyEnabled = saved }
+
+        settings.historyEnabled = false
+        XCTAssertFalse(settings.historyEnabled)
+        XCTAssertFalse(UserDefaults.standard.bool(forKey: "historyEnabled"))
+
+        settings.historyEnabled = true
+        XCTAssertTrue(UserDefaults.standard.bool(forKey: "historyEnabled"))
+    }
+
     func testSnapshotTTLMinutesAcceptsShortRetention() {
         // User asked: "je veux qu'il reste 5 min en historique". Make sure 5 min is a valid,
         // persisted value.
@@ -1899,6 +1924,7 @@ final class LaunchSnapshotTests: XCTestCase {
 final class SnapshotStoreTests: XCTestCase {
 
     private var savedGlobalTTL: Int = 60
+    private var savedHistoryEnabled: Bool = true
 
     override func setUp() {
         super.setUp()
@@ -1907,10 +1933,15 @@ final class SnapshotStoreTests: XCTestCase {
         // behaviour explicitly. Without this, `store.save()` would strip them on insert.
         savedGlobalTTL = AppSettings.shared.snapshotTTLMinutes
         AppSettings.shared.snapshotTTLMinutes = 0
+        // Force history ON so save() actually persists in tests — individual tests for the
+        // disabled path flip this themselves and restore it via their own defer.
+        savedHistoryEnabled = AppSettings.shared.historyEnabled
+        AppSettings.shared.historyEnabled = true
     }
 
     override func tearDown() {
         AppSettings.shared.snapshotTTLMinutes = savedGlobalTTL
+        AppSettings.shared.historyEnabled = savedHistoryEnabled
         super.tearDown()
     }
 
@@ -2086,6 +2117,55 @@ final class SnapshotStoreTests: XCTestCase {
         let ordered = groups[0].snapshots.map(\.roleLabel)
         // DB → Back → Front per RelaunchRole priority.
         XCTAssertEqual(ordered, ["DB", "Back", "Front"])
+    }
+
+    // MARK: - historyEnabled toggle (issue #27)
+
+    func testSaveIsNoOpWhenHistoryDisabled() {
+        // With `historyEnabled = false`, save() must not retain the snapshot in memory
+        // nor write the JSON blob back to UserDefaults.
+        let savedFlag = AppSettings.shared.historyEnabled
+        defer { AppSettings.shared.historyEnabled = savedFlag }
+        AppSettings.shared.historyEnabled = false
+
+        let (store, defaults) = freshStore()
+        store.save(makeSnapshot())
+
+        XCTAssertTrue(store.isEmpty, "history disabled → in-memory store stays empty")
+        XCTAssertNil(defaults.data(forKey: "launchSnapshots"),
+                     "history disabled → nothing written to UserDefaults")
+    }
+
+    func testSaveStillWorksWhenHistoryEnabled() {
+        // The default state — make sure flipping the new flag doesn't regress the
+        // existing save/persist path.
+        let savedFlag = AppSettings.shared.historyEnabled
+        defer { AppSettings.shared.historyEnabled = savedFlag }
+        AppSettings.shared.historyEnabled = true
+
+        let (store, defaults) = freshStore()
+        store.save(makeSnapshot())
+
+        XCTAssertEqual(store.snapshots.count, 1)
+        XCTAssertNotNil(defaults.data(forKey: "launchSnapshots"))
+    }
+
+    func testClearAllStillWorksWhenHistoryDisabled() {
+        // The OFF transition needs to drain any pre-existing snapshots — so clearAll()
+        // must remain functional even with the master switch off.
+        let savedFlag = AppSettings.shared.historyEnabled
+        defer { AppSettings.shared.historyEnabled = savedFlag }
+
+        AppSettings.shared.historyEnabled = true
+        let (store, defaults) = freshStore()
+        store.save(makeSnapshot())
+        XCTAssertEqual(store.snapshots.count, 1)
+
+        AppSettings.shared.historyEnabled = false
+        store.clearAll()
+        XCTAssertTrue(store.isEmpty)
+        // clearAll persists the empty dict — UserDefaults blob exists but decodes to [:].
+        XCTAssertNotNil(defaults.data(forKey: "launchSnapshots"))
     }
 }
 

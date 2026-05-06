@@ -7,6 +7,7 @@ struct SettingsView: View {
     var onClose: () -> Void
     @State private var showUninstallConfirm = false
     @State private var showClearSnapshotsConfirm = false
+    @State private var showDisableHistoryConfirm = false
     @State private var updater = UpdateChecker.shared
     @State private var snapshotStore = SnapshotStore.shared
     @State private var newKeyword: [String: String] = [:]
@@ -170,7 +171,18 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            historyEnabledToggle
+
+            // Disabling-history confirmation banner. Mirrors the "Clear all" inline confirm
+            // pattern below — flipping the toggle ON → OFF stages the destructive action
+            // here so the user can back out before any snapshots are wiped.
+            if showDisableHistoryConfirm {
+                disableHistoryConfirmBanner
+            }
+
             ttlRow
+                .disabled(!settings.historyEnabled)
+                .opacity(settings.historyEnabled ? 1.0 : 0.5)
 
             let count = snapshotStore.snapshots.count
             HStack(spacing: 6) {
@@ -206,10 +218,79 @@ struct SettingsView: View {
                         }
                     }
                     .buttonStyle(.borderless)
-                    .disabled(count == 0)
+                    .disabled(count == 0 || !settings.historyEnabled)
                 }
             }
         }
+    }
+
+    /// Master toggle. Turning it ON is unconditional. Turning it OFF stages a confirmation
+    /// banner (`showDisableHistoryConfirm`) before any snapshots are cleared, since the
+    /// disable path also wipes whatever's currently stored. We bind to a derived Boolean
+    /// rather than `settings.historyEnabled` directly so we can intercept the OFF transition
+    /// and either confirm-then-clear or revert.
+    private var historyEnabledToggle: some View {
+        let binding = Binding<Bool>(
+            get: { settings.historyEnabled },
+            set: { newValue in
+                if newValue {
+                    // ON path: re-enable immediately, drop any stale confirm banner.
+                    showDisableHistoryConfirm = false
+                    settings.historyEnabled = true
+                } else {
+                    // OFF path: stage the confirm banner. The toggle visually stays ON
+                    // until the user clicks "Disable & clear" — Cancel restores it.
+                    showDisableHistoryConfirm = true
+                }
+            }
+        )
+        return Toggle(isOn: binding) {
+            Text("Enable history")
+                .font(.system(size: 11))
+        }
+        .toggleStyle(.switch)
+        .controlSize(.small)
+    }
+
+    private var disableHistoryConfirmBanner: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 5) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .font(.system(size: 11))
+                Text("Disabling will clear all current snapshots. Continue?")
+                    .font(.system(size: 11, weight: .medium))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    // Toggle binding already left `historyEnabled` untouched, so we just
+                    // hide the banner.
+                    showDisableHistoryConfirm = false
+                }
+                .buttonStyle(.borderless)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                Button {
+                    snapshotStore.clearAll()
+                    settings.historyEnabled = false
+                    showDisableHistoryConfirm = false
+                } label: {
+                    Text("Disable & clear")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .controlSize(.small)
+            }
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 7))
+        .overlay(
+            RoundedRectangle(cornerRadius: 7)
+                .strokeBorder(Color.orange.opacity(0.25), lineWidth: 0.5)
+        )
     }
 
     /// "Keep forever" toggle + logarithmic slider for retention across 4 orders of
