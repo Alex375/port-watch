@@ -76,6 +76,14 @@ final class AppSettings {
         didSet { UserDefaults.standard.set(snapshotTTLMinutes, forKey: "snapshotTTLMinutes") }
     }
 
+    /// Master switch for the restart-history feature. When `false`, `SnapshotStore.save`
+    /// becomes a no-op so nothing transits via UserDefaults — useful for users who prefer
+    /// zero persistence over the existing TTL-based pruning. Defaults to `true` to keep
+    /// the existing behaviour for current users.
+    var historyEnabled: Bool {
+        didSet { UserDefaults.standard.set(historyEnabled, forKey: "historyEnabled") }
+    }
+
     // MARK: - Relaunch tuning
 
     /// How long `PortMonitor.startSnapshot`/`startProject` poll for a restarted port
@@ -120,6 +128,7 @@ final class AppSettings {
             "claudeKeywords": defaultClaude,
             "ignoredProcesses": defaultIgnored,
             "snapshotTTLMinutes": 60, // 1 hour — use the "Keep forever" toggle for indefinite retention
+            "historyEnabled": true,
         ])
 
         self.cpuThreshold = defaults.double(forKey: "cpuThreshold")
@@ -135,6 +144,7 @@ final class AppSettings {
         self.claudeKeywords = defaults.stringArray(forKey: "claudeKeywords") ?? defaultClaude
         self.ignoredProcesses = defaults.stringArray(forKey: "ignoredProcesses") ?? defaultIgnored
         self.snapshotTTLMinutes = defaults.integer(forKey: "snapshotTTLMinutes")
+        self.historyEnabled = defaults.bool(forKey: "historyEnabled")
     }
 
     /// UserDefaults flag set once the legacy TTL migration has run (successfully or not).
@@ -174,5 +184,6 @@ final class AppSettings {
         claudeKeywords = ["claude", "claude-code", "@anthropic-ai/claude-code", "anthropic-ai/claude"]
         ignoredProcesses = []
         snapshotTTLMinutes = 60 // 1 hour — use the "Keep forever" toggle for indefinite retention
+        historyEnabled = true
     }
 }

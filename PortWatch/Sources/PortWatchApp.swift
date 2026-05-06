@@ -169,7 +169,7 @@ struct MenuContentView: View {
                             ForEach(monitor.groupedEntries, id: \.projectName) { group in
                                 projectSection(group)
                             }
-                            if !monitor.stoppedGroups.isEmpty {
+                            if !monitor.stoppedGroups.isEmpty && monitor.settings.historyEnabled {
                                 if !monitor.entries.isEmpty {
                                     Divider().opacity(0.4)
                                 }
