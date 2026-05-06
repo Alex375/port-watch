@@ -1542,75 +1542,6 @@ final class FilterServerSocketsTests: XCTestCase {
     }
 }
 
-// MARK: - filterIgnoredProcesses Tests (from #13 — UI branch)
-
-final class FilterIgnoredProcessesTests: XCTestCase {
-
-    private func make(pid: Int32 = 100, port: UInt16 = 3000, name: String) -> PortEntry {
-        PortEntry(
-            id: "\(port)-\(pid)",
-            port: port, pid: pid, ppid: 0,
-            processName: name, processPath: "", commandLine: "",
-            arguments: [], environment: [:], cwd: "",
-            tcpState: .listen,
-            processStartTime: Date(),
-            residentMemoryBytes: 0, totalCPUTimeNs: 0,
-            projectName: "Test", worktreeName: nil,
-            projectKey: "other:test", dockerContainerID: nil,
-            roleLabel: nil, roleIcon: nil
-        )
-    }
-
-    func testEmptyIgnoreListReturnsAll() {
-        let entries = [make(name: "node"), make(name: "postgres")]
-        let result = PortMonitor.filterIgnoredProcesses(entries, ignored: [])
-        XCTAssertEqual(result.count, 2)
-    }
-
-    func testFiltersByExactName() {
-        let entries = [
-            make(name: "claude"),
-            make(name: "node"),
-            make(name: "discord"),
-        ]
-        let result = PortMonitor.filterIgnoredProcesses(entries, ignored: ["claude", "discord"])
-        XCTAssertEqual(result.count, 1)
-        XCTAssertEqual(result.first?.processName, "node")
-    }
-
-    func testCaseInsensitiveMatch() {
-        // `ignored` is expected to be pre-lowercased by the caller; process names may vary.
-        let entries = [make(name: "Claude"), make(name: "CLAUDE"), make(name: "CLAUDEX")]
-        let result = PortMonitor.filterIgnoredProcesses(entries, ignored: ["claude"])
-        XCTAssertEqual(result.count, 1) // only CLAUDEX (different name) survives
-        XCTAssertEqual(result.first?.processName, "CLAUDEX")
-    }
-
-    func testExactMatchOnly_NoSubstring() {
-        // "claude" in ignore list should NOT filter out "claude-helper" or "myclaude".
-        let entries = [
-            make(name: "claude"),
-            make(name: "claude-helper"),
-            make(name: "myclaude"),
-        ]
-        let result = PortMonitor.filterIgnoredProcesses(entries, ignored: ["claude"])
-        XCTAssertEqual(result.count, 2)
-        XCTAssertTrue(result.contains { $0.processName == "claude-helper" })
-        XCTAssertTrue(result.contains { $0.processName == "myclaude" })
-    }
-
-    func testPreservesOrderOfRemaining() {
-        let entries = [
-            make(port: 3000, name: "node"),
-            make(port: 5432, name: "postgres"),
-            make(port: 64975, name: "claude"),
-            make(port: 8080, name: "redis-server"),
-        ]
-        let result = PortMonitor.filterIgnoredProcesses(entries, ignored: ["claude"])
-        XCTAssertEqual(result.map(\.port), [3000, 5432, 8080])
-    }
-}
-
 // MARK: - partitionIgnoredProcesses Tests (#26 — Show ignored toggle)
 
 final class PartitionIgnoredProcessesTests: XCTestCase {
@@ -1669,12 +1600,25 @@ final class PartitionIgnoredProcessesTests: XCTestCase {
         XCTAssertEqual(result.visible.map(\.port), [3000, 5432, 8080])
         XCTAssertEqual(result.ignored.map(\.port), [64975])
     }
+
+    func testPartitionExactMatchOnly_NoSubstring() {
+        // "claude" in the ignore list must NOT also match "claude-helper" / "myclaude".
+        // Substring leakage would silently hide unrelated tooling sharing a prefix.
+        let entries = [
+            make(port: 3000, name: "claude"),
+            make(port: 4000, name: "claude-helper"),
+            make(port: 5000, name: "myclaude"),
+        ]
+        let result = PortMonitor.partitionIgnoredProcesses(entries, ignored: ["claude"])
+        XCTAssertEqual(result.ignored.map(\.processName), ["claude"])
+        XCTAssertEqual(Set(result.visible.map(\.processName)), ["claude-helper", "myclaude"])
+    }
 }
 
 @MainActor
 final class PortMonitorIgnoredEntriesTests: XCTestCase {
 
-    private func makeDisplay(pid: Int32, port: UInt16, name: String, project: String) -> PortEntryDisplay {
+    private func makeDisplay(pid: Int32, port: UInt16, name: String, project: String, isIgnored: Bool = false) -> PortEntryDisplay {
         let entry = PortEntry(
             id: "\(port)-\(pid)", port: port, pid: pid, ppid: 0,
             processName: name, processPath: "", commandLine: "",
@@ -1685,7 +1629,7 @@ final class PortMonitorIgnoredEntriesTests: XCTestCase {
             projectKey: "other:\(project)", dockerContainerID: nil,
             roleLabel: nil, roleIcon: nil
         )
-        return PortEntryDisplay(entry: entry, cpuPercent: nil, isZombie: false)
+        return PortEntryDisplay(entry: entry, cpuPercent: nil, isZombie: false, isIgnored: isIgnored)
     }
 
     func testGroupedEntriesExcludesIgnoredByDefault() {
@@ -1720,15 +1664,14 @@ final class PortMonitorIgnoredEntriesTests: XCTestCase {
         XCTAssertTrue(groups.contains { $0.projectName == "claude" })
     }
 
-    func testIsIgnoredReturnsTrueForRowsInIgnoredBucket() {
-        let monitor = PortMonitor()
-        monitor.stopScanning()
+    func testDisplayIsIgnoredFlagDistinguishesBuckets() {
+        // The `isIgnored` flag is stamped on `PortEntryDisplay` at scan time so the
+        // UI can branch in O(1) without the monitor re-scanning the ignored bucket
+        // for every row. Visible rows must keep `false`, ignored rows must carry `true`.
         let visible = makeDisplay(pid: 1, port: 3000, name: "node", project: "front")
-        let ignored = makeDisplay(pid: 2, port: 5000, name: "claude", project: "claude")
-        monitor.entries = [visible]
-        monitor.ignoredEntries = [ignored]
-        XCTAssertTrue(monitor.isIgnored(ignored))
-        XCTAssertFalse(monitor.isIgnored(visible))
+        let ignored = makeDisplay(pid: 2, port: 5000, name: "claude", project: "claude", isIgnored: true)
+        XCTAssertFalse(visible.isIgnored)
+        XCTAssertTrue(ignored.isIgnored)
     }
 
     func testComputedGroupedEntriesMatchesIncludingFalse() {

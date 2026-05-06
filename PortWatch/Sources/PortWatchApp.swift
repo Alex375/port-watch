@@ -206,12 +206,7 @@ struct MenuContentView: View {
 
             Divider().opacity(0.6)
 
-            // Footer — Settings / Show ignored toggle / version / Quit.
-            // Note (issue #26 caveat): the ⌘. shortcut is wired on the toggle
-            // button, but `MenuBarExtra` with `.window` style only delivers
-            // keystrokes when the popover has keyboard focus — clicking the
-            // menubar icon doesn't always grant it. The button itself is the
-            // primary affordance; the shortcut is a best-effort convenience.
+            // Footer — Settings / version / Quit.
             HStack(spacing: 0) {
                 FooterButton(icon: "gearshape", label: "Settings") {
                     showSettings.toggle()
@@ -518,7 +513,7 @@ struct MenuContentView: View {
             isKilling: monitor.killingPIDs.contains(display.entry.pid),
             isConflict: monitor.conflictPorts.contains(display.entry.port),
             isPendingConfirmation: isPending,
-            isIgnored: monitor.isIgnored(display),
+            isIgnored: display.isIgnored,
             settings: monitor.settings,
             onKill: {
                 if display.entry.projectName == "Other" {

@@ -195,13 +195,20 @@ struct PortEntryDisplay: Identifiable, Sendable {
     /// fall back to `entry.residentMemoryBytes`.
     let aggregatedMemoryBytes: UInt64?
 
+    /// True when this row was surfaced via the "Show ignored" toggle (issue #26) —
+    /// it normally would be hidden because its process name is in the user's ignore list.
+    /// Stamped at scan time so the UI can branch on it in O(1) without re-scanning the
+    /// ignored bucket per row.
+    let isIgnored: Bool
+
     init(
         entry: PortEntry,
         cpuPercent: Double?,
         isZombie: Bool,
         workerCount: Int = 0,
         workerPIDs: [Int32] = [],
-        aggregatedMemoryBytes: UInt64? = nil
+        aggregatedMemoryBytes: UInt64? = nil,
+        isIgnored: Bool = false
     ) {
         self.entry = entry
         self.cpuPercent = cpuPercent
@@ -209,6 +216,7 @@ struct PortEntryDisplay: Identifiable, Sendable {
         self.workerCount = workerCount
         self.workerPIDs = workerPIDs
         self.aggregatedMemoryBytes = aggregatedMemoryBytes
+        self.isIgnored = isIgnored
     }
 
     var id: String { entry.id }

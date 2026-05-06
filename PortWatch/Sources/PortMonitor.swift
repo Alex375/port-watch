@@ -29,13 +29,6 @@ final class PortMonitor {
     /// Number of consecutive scans a `(pid, port)` must remain in `CLOSE_WAIT` before being flagged as a zombie.
     nonisolated static let zombieConfirmationScans = 3
 
-    /// Drop entries whose process name is in the user's ignore list (case-insensitive).
-    /// Pure function — exposed for unit testing. `ignored` must be pre-lowercased.
-    nonisolated static func filterIgnoredProcesses(_ entries: [PortEntry], ignored: Set<String>) -> [PortEntry] {
-        guard !ignored.isEmpty else { return entries }
-        return entries.filter { !ignored.contains($0.processName.lowercased()) }
-    }
-
     /// Split entries into (visible, ignored) buckets. `ignored` must be pre-lowercased.
     /// Pure function — exposed for unit testing the "Show ignored" toggle wiring.
     nonisolated static func partitionIgnoredProcesses(
@@ -72,11 +65,6 @@ final class PortMonitor {
                 if rhs.projectName == "Other" { return true }
                 return lhs.projectName.localizedCaseInsensitiveCompare(rhs.projectName) == .orderedAscending
             }
-    }
-
-    /// Whether `display` originates from the ignored bucket. Cheap O(n) by (pid, port).
-    func isIgnored(_ display: PortEntryDisplay) -> Bool {
-        ignoredEntries.contains { $0.entry.pid == display.entry.pid && $0.entry.port == display.entry.port }
     }
 
     /// Last kill result — shown to the user, never swallowed.
@@ -375,8 +363,10 @@ final class PortMonitor {
         // main view; they exist purely so the "Show ignored" toggle has rows
         // to render. Keeping them light avoids bloating the CPU sample map and
         // zombie streak dictionaries with PIDs the user explicitly silenced.
+        // The `isIgnored` flag is stamped here so `PortRowView` can branch in
+        // O(1) without the UI having to scan the bucket per row.
         self.ignoredEntries = rawIgnored.map { entry in
-            PortEntryDisplay(entry: entry, cpuPercent: nil, isZombie: false)
+            PortEntryDisplay(entry: entry, cpuPercent: nil, isZombie: false, isIgnored: true)
         }
         self.previousSamples = newSamples
         self.closeWaitStreaks = newStreaks
