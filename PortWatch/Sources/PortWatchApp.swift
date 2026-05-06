@@ -35,6 +35,10 @@ struct MenuContentView: View {
     @State private var updater = UpdateChecker.shared
     @State private var isOtherCollapsed = true
     @State private var isStoppedCollapsed = true
+    /// Toggle for the "Show ignored" footer button (issue #26).
+    /// When true, processes from `AppSettings.ignoredProcesses` are folded back
+    /// into the grouped list with an "ignored" pill and dimmed style.
+    @State private var showIgnored = false
     /// Measured height of the port list content. Drives the ScrollView's frame height explicitly,
     /// so that expanding a row animates the container smoothly instead of oscillating between
     /// "fits" and "scrolls" states (would trigger scroll-bar flicker — issue #20).
@@ -141,7 +145,8 @@ struct MenuContentView: View {
             Divider()
 
             Group {
-                if monitor.entries.isEmpty && monitor.stoppedGroups.isEmpty {
+                let visibleGroups = monitor.groupedEntries(includingIgnored: showIgnored)
+                if visibleGroups.isEmpty && monitor.stoppedGroups.isEmpty {
                     VStack(spacing: 12) {
                         ZStack {
                             Circle()
@@ -166,11 +171,11 @@ struct MenuContentView: View {
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
-                            ForEach(monitor.groupedEntries, id: \.projectName) { group in
+                            ForEach(visibleGroups, id: \.projectName) { group in
                                 projectSection(group)
                             }
                             if !monitor.stoppedGroups.isEmpty && monitor.settings.historyEnabled {
-                                if !monitor.entries.isEmpty {
+                                if !visibleGroups.isEmpty {
                                     Divider().opacity(0.4)
                                 }
                                 recentlyStoppedSection
@@ -205,10 +210,25 @@ struct MenuContentView: View {
 
             Divider().opacity(0.6)
 
-            // Footer — Settings / version / Quit
+            // Footer — Settings / Show ignored toggle / version / Quit.
+            // Note (issue #26 caveat): the ⌘. shortcut is wired on the toggle
+            // button, but `MenuBarExtra` with `.window` style only delivers
+            // keystrokes when the popover has keyboard focus — clicking the
+            // menubar icon doesn't always grant it. The button itself is the
+            // primary affordance; the shortcut is a best-effort convenience.
             HStack(spacing: 0) {
                 FooterButton(icon: "gearshape", label: "Settings") {
                     showSettings.toggle()
+                }
+                Spacer()
+                FooterButton(
+                    icon: showIgnored ? "eye.slash" : "eye",
+                    label: showIgnored ? "Hide ignored" : "Show ignored",
+                    tint: .secondary,
+                    shortcutKey: ".",
+                    shortcutModifiers: .command
+                ) {
+                    withAnimation { showIgnored.toggle() }
                 }
                 Spacer()
                 if let version = appVersion {
@@ -509,6 +529,7 @@ struct MenuContentView: View {
             isKilling: monitor.killingPIDs.contains(display.entry.pid),
             isConflict: monitor.conflictPorts.contains(display.entry.port),
             isPendingConfirmation: isPending,
+            isIgnored: monitor.isIgnored(display),
             settings: monitor.settings,
             onKill: {
                 if display.entry.projectName == "Other" {
@@ -544,12 +565,16 @@ struct FooterButton: View {
     let icon: String
     let label: String
     var tint: Color = .secondary
+    /// Optional keyboard shortcut. `nil` (default) leaves the button without
+    /// a shortcut — keeps existing call sites unchanged.
+    var shortcutKey: KeyEquivalent? = nil
+    var shortcutModifiers: EventModifiers = .command
     let action: () -> Void
 
     @State private var isHovered = false
 
     var body: some View {
-        Button(action: action) {
+        let button = Button(action: action) {
             HStack(spacing: 5) {
                 Image(systemName: icon)
                     .font(.system(size: 11, weight: .medium))
@@ -567,6 +592,12 @@ struct FooterButton: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
+
+        if let key = shortcutKey {
+            button.keyboardShortcut(key, modifiers: shortcutModifiers)
+        } else {
+            button
+        }
     }
 }
 

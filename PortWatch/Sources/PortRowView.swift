@@ -18,6 +18,10 @@ struct PortRowView: View {
     let isKilling: Bool
     let isConflict: Bool
     let isPendingConfirmation: Bool
+    /// True when this row is only being shown because the user toggled
+    /// "Show ignored". Renders dimmed with an "ignored" pill and suppresses
+    /// the hover kill/open actions (issue #26).
+    var isIgnored: Bool = false
     let settings: AppSettings
     let onKill: () -> Void
     let onOpen: () -> Void
@@ -85,6 +89,7 @@ struct PortRowView: View {
             .padding(.trailing, 10)
         }
         .background(backgroundTint, in: RoundedRectangle(cornerRadius: 8))
+        .opacity(isIgnored ? 0.55 : 1.0)
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
         .onTapGesture {
@@ -107,6 +112,12 @@ struct PortRowView: View {
             // Role badge (compact, centered with port)
             if let label = display.entry.roleLabel, let icon = display.entry.roleIcon {
                 roleBadge(icon: icon, label: label)
+            }
+
+            // Ignored pill — only visible when the row is being shown via the
+            // "Show ignored" toggle. Signals the user this would normally be hidden.
+            if isIgnored {
+                ignoredBadge
             }
 
             // Fleet pill — discrete, neutral. Means the row aggregates a master + N workers.
@@ -142,8 +153,10 @@ struct PortRowView: View {
                     .frame(width: 14, height: 14)
             }
 
-            // Actions (hover) or uptime (idle)
-            if isHovered {
+            // Actions (hover) or uptime (idle). Ignored rows never reveal the
+            // kill/open cluster — killing a process you've explicitly silenced
+            // is almost always a mistake; remove it from the list first.
+            if isHovered && !isIgnored {
                 actionsCluster
                     .transition(.opacity)
             } else {
@@ -310,6 +323,22 @@ struct PortRowView: View {
         .padding(.vertical, 2)
         .background(Color.secondary.opacity(0.12), in: Capsule())
         .help("Master + \(display.workerCount) worker process\(display.workerCount == 1 ? "" : "es") sharing this socket")
+    }
+
+    // MARK: - Ignored pill
+
+    private var ignoredBadge: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "eye.slash")
+                .font(.system(size: 8))
+            Text("ignored")
+                .font(.system(size: 9, weight: .medium))
+        }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(Color.secondary.opacity(0.12), in: Capsule())
+        .help("This process is in the ignored list. It would normally be hidden.")
     }
 
     // MARK: - Reusable bits
