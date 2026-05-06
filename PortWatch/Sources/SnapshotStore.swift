@@ -67,7 +67,13 @@ final class SnapshotStore {
     /// Previously `save` called `persist()` then `prune()` which could `persist()` a
     /// second time — two JSON encodes + two UserDefaults writes per save. A `stopProject`
     /// stopping 10 rows rewrote the whole dictionary 20 times. Now it writes once.
+    ///
+    /// When `AppSettings.historyEnabled` is `false`, this becomes a no-op: nothing is
+    /// kept in memory and nothing transits via UserDefaults. The other mutators
+    /// (`remove`, `clearAll`, `prune`) stay live so an ON → OFF transition can still
+    /// drain whatever was saved while history was on.
     func save(_ snapshot: LaunchSnapshot) {
+        guard AppSettings.shared.historyEnabled else { return }
         snapshots[snapshot.id] = snapshot
         removeExpired(minutes: ttlMinutes)
         persist()

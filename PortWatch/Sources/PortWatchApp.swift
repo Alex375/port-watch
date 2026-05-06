@@ -141,7 +141,8 @@ struct MenuContentView: View {
             Divider()
 
             Group {
-                if monitor.entries.isEmpty && monitor.stoppedGroups.isEmpty {
+                let visibleGroups = monitor.groupedEntries(includingIgnored: monitor.settings.showIgnored)
+                if visibleGroups.isEmpty && monitor.stoppedGroups.isEmpty {
                     VStack(spacing: 12) {
                         ZStack {
                             Circle()
@@ -166,11 +167,11 @@ struct MenuContentView: View {
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
-                            ForEach(monitor.groupedEntries, id: \.projectName) { group in
+                            ForEach(visibleGroups, id: \.projectName) { group in
                                 projectSection(group)
                             }
-                            if !monitor.stoppedGroups.isEmpty {
-                                if !monitor.entries.isEmpty {
+                            if !monitor.stoppedGroups.isEmpty && monitor.settings.historyEnabled {
+                                if !visibleGroups.isEmpty {
                                     Divider().opacity(0.4)
                                 }
                                 recentlyStoppedSection
@@ -205,7 +206,7 @@ struct MenuContentView: View {
 
             Divider().opacity(0.6)
 
-            // Footer — Settings / version / Quit
+            // Footer — Settings / version / Quit.
             HStack(spacing: 0) {
                 FooterButton(icon: "gearshape", label: "Settings") {
                     showSettings.toggle()
@@ -512,6 +513,7 @@ struct MenuContentView: View {
             isKilling: monitor.killingPIDs.contains(display.entry.pid),
             isConflict: monitor.conflictPorts.contains(display.entry.port),
             isPendingConfirmation: isPending,
+            isIgnored: display.isIgnored,
             settings: monitor.settings,
             onKill: {
                 if display.entry.projectName == "Other" {
@@ -762,3 +764,4 @@ struct HoverButton: View {
         }
     }
 }
+

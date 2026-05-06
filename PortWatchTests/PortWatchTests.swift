@@ -1282,6 +1282,31 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(UserDefaults.standard.integer(forKey: "snapshotTTLMinutes"), 0)
     }
 
+    func testHistoryEnabledDefaultsToTrue() {
+        // Master switch must default ON so existing users keep the current behaviour
+        // after upgrading. resetToDefaults() must also re-enable it.
+        let settings = AppSettings.shared
+        let saved = settings.historyEnabled
+        defer { settings.historyEnabled = saved }
+
+        settings.historyEnabled = false
+        settings.resetToDefaults()
+        XCTAssertTrue(settings.historyEnabled, "resetToDefaults must re-enable history")
+    }
+
+    func testHistoryEnabledPersistsToUserDefaults() {
+        let settings = AppSettings.shared
+        let saved = settings.historyEnabled
+        defer { settings.historyEnabled = saved }
+
+        settings.historyEnabled = false
+        XCTAssertFalse(settings.historyEnabled)
+        XCTAssertFalse(UserDefaults.standard.bool(forKey: "historyEnabled"))
+
+        settings.historyEnabled = true
+        XCTAssertTrue(UserDefaults.standard.bool(forKey: "historyEnabled"))
+    }
+
     func testSnapshotTTLMinutesAcceptsShortRetention() {
         // User asked: "je veux qu'il reste 5 min en historique". Make sure 5 min is a valid,
         // persisted value.
@@ -1517,11 +1542,11 @@ final class FilterServerSocketsTests: XCTestCase {
     }
 }
 
-// MARK: - filterIgnoredProcesses Tests (from #13 — UI branch)
+// MARK: - partitionIgnoredProcesses Tests (#26 — Show ignored toggle)
 
-final class FilterIgnoredProcessesTests: XCTestCase {
+final class PartitionIgnoredProcessesTests: XCTestCase {
 
-    private func make(pid: Int32 = 100, port: UInt16 = 3000, name: String) -> PortEntry {
+    private func make(pid: Int32 = 100, port: UInt16 = 3000, name: String, project: String = "Test") -> PortEntry {
         PortEntry(
             id: "\(port)-\(pid)",
             port: port, pid: pid, ppid: 0,
@@ -1530,59 +1555,139 @@ final class FilterIgnoredProcessesTests: XCTestCase {
             tcpState: .listen,
             processStartTime: Date(),
             residentMemoryBytes: 0, totalCPUTimeNs: 0,
-            projectName: "Test", worktreeName: nil,
-            projectKey: "other:test", dockerContainerID: nil,
+            projectName: project, worktreeName: nil,
+            projectKey: "other:\(project)", dockerContainerID: nil,
             roleLabel: nil, roleIcon: nil
         )
     }
 
-    func testEmptyIgnoreListReturnsAll() {
+    func testEmptyIgnoreListPutsEverythingInVisible() {
         let entries = [make(name: "node"), make(name: "postgres")]
-        let result = PortMonitor.filterIgnoredProcesses(entries, ignored: [])
-        XCTAssertEqual(result.count, 2)
+        let result = PortMonitor.partitionIgnoredProcesses(entries, ignored: [])
+        XCTAssertEqual(result.visible.count, 2)
+        XCTAssertTrue(result.ignored.isEmpty)
     }
 
-    func testFiltersByExactName() {
+    func testPartitionsByExactName() {
         let entries = [
-            make(name: "claude"),
-            make(name: "node"),
-            make(name: "discord"),
+            make(port: 3000, name: "node"),
+            make(port: 5432, name: "postgres"),
+            make(port: 64975, name: "claude"),
+            make(port: 8080, name: "discord"),
         ]
-        let result = PortMonitor.filterIgnoredProcesses(entries, ignored: ["claude", "discord"])
-        XCTAssertEqual(result.count, 1)
-        XCTAssertEqual(result.first?.processName, "node")
+        let result = PortMonitor.partitionIgnoredProcesses(entries, ignored: ["claude", "discord"])
+        XCTAssertEqual(result.visible.map(\.processName), ["node", "postgres"])
+        XCTAssertEqual(result.ignored.map(\.processName), ["claude", "discord"])
     }
 
-    func testCaseInsensitiveMatch() {
-        // `ignored` is expected to be pre-lowercased by the caller; process names may vary.
-        let entries = [make(name: "Claude"), make(name: "CLAUDE"), make(name: "CLAUDEX")]
-        let result = PortMonitor.filterIgnoredProcesses(entries, ignored: ["claude"])
-        XCTAssertEqual(result.count, 1) // only CLAUDEX (different name) survives
-        XCTAssertEqual(result.first?.processName, "CLAUDEX")
+    func testPartitionCaseInsensitiveMatch() {
+        // `ignored` set is pre-lowercased; entry process names may be mixed-case.
+        let entries = [make(name: "Claude"), make(name: "CLAUDE"), make(name: "NODE")]
+        let result = PortMonitor.partitionIgnoredProcesses(entries, ignored: ["claude"])
+        XCTAssertEqual(result.visible.count, 1)
+        XCTAssertEqual(result.visible.first?.processName, "NODE")
+        XCTAssertEqual(result.ignored.count, 2)
     }
 
-    func testExactMatchOnly_NoSubstring() {
-        // "claude" in ignore list should NOT filter out "claude-helper" or "myclaude".
-        let entries = [
-            make(name: "claude"),
-            make(name: "claude-helper"),
-            make(name: "myclaude"),
-        ]
-        let result = PortMonitor.filterIgnoredProcesses(entries, ignored: ["claude"])
-        XCTAssertEqual(result.count, 2)
-        XCTAssertTrue(result.contains { $0.processName == "claude-helper" })
-        XCTAssertTrue(result.contains { $0.processName == "myclaude" })
-    }
-
-    func testPreservesOrderOfRemaining() {
+    func testPartitionPreservesOrder() {
         let entries = [
             make(port: 3000, name: "node"),
             make(port: 5432, name: "postgres"),
             make(port: 64975, name: "claude"),
             make(port: 8080, name: "redis-server"),
         ]
-        let result = PortMonitor.filterIgnoredProcesses(entries, ignored: ["claude"])
-        XCTAssertEqual(result.map(\.port), [3000, 5432, 8080])
+        let result = PortMonitor.partitionIgnoredProcesses(entries, ignored: ["claude"])
+        XCTAssertEqual(result.visible.map(\.port), [3000, 5432, 8080])
+        XCTAssertEqual(result.ignored.map(\.port), [64975])
+    }
+
+    func testPartitionExactMatchOnly_NoSubstring() {
+        // "claude" in the ignore list must NOT also match "claude-helper" / "myclaude".
+        // Substring leakage would silently hide unrelated tooling sharing a prefix.
+        let entries = [
+            make(port: 3000, name: "claude"),
+            make(port: 4000, name: "claude-helper"),
+            make(port: 5000, name: "myclaude"),
+        ]
+        let result = PortMonitor.partitionIgnoredProcesses(entries, ignored: ["claude"])
+        XCTAssertEqual(result.ignored.map(\.processName), ["claude"])
+        XCTAssertEqual(Set(result.visible.map(\.processName)), ["claude-helper", "myclaude"])
+    }
+}
+
+@MainActor
+final class PortMonitorIgnoredEntriesTests: XCTestCase {
+
+    private func makeDisplay(pid: Int32, port: UInt16, name: String, project: String, isIgnored: Bool = false) -> PortEntryDisplay {
+        let entry = PortEntry(
+            id: "\(port)-\(pid)", port: port, pid: pid, ppid: 0,
+            processName: name, processPath: "", commandLine: "",
+            arguments: [], environment: [:], cwd: "",
+            tcpState: .listen, processStartTime: Date(),
+            residentMemoryBytes: 0, totalCPUTimeNs: 0,
+            projectName: project, worktreeName: nil,
+            projectKey: "other:\(project)", dockerContainerID: nil,
+            roleLabel: nil, roleIcon: nil
+        )
+        return PortEntryDisplay(entry: entry, cpuPercent: nil, isZombie: false, isIgnored: isIgnored)
+    }
+
+    func testGroupedEntriesExcludesIgnoredByDefault() {
+        let monitor = PortMonitor()
+        monitor.stopScanning()
+        monitor.entries = [
+            makeDisplay(pid: 1, port: 3000, name: "node", project: "front"),
+        ]
+        monitor.ignoredEntries = [
+            makeDisplay(pid: 2, port: 5000, name: "claude", project: "claude"),
+        ]
+        let groups = monitor.groupedEntries(includingIgnored: false)
+        let total = groups.reduce(0) { $0 + $1.entries.count }
+        XCTAssertEqual(total, 1)
+        XCTAssertTrue(groups.contains { $0.projectName == "front" })
+        XCTAssertFalse(groups.contains { $0.projectName == "claude" })
+    }
+
+    func testGroupedEntriesIncludesIgnoredWhenAsked() {
+        let monitor = PortMonitor()
+        monitor.stopScanning()
+        monitor.entries = [
+            makeDisplay(pid: 1, port: 3000, name: "node", project: "front"),
+        ]
+        monitor.ignoredEntries = [
+            makeDisplay(pid: 2, port: 5000, name: "claude", project: "claude"),
+        ]
+        let groups = monitor.groupedEntries(includingIgnored: true)
+        let total = groups.reduce(0) { $0 + $1.entries.count }
+        XCTAssertEqual(total, 2)
+        XCTAssertTrue(groups.contains { $0.projectName == "front" })
+        XCTAssertTrue(groups.contains { $0.projectName == "claude" })
+    }
+
+    func testDisplayIsIgnoredFlagDistinguishesBuckets() {
+        // The `isIgnored` flag is stamped on `PortEntryDisplay` at scan time so the
+        // UI can branch in O(1) without the monitor re-scanning the ignored bucket
+        // for every row. Visible rows must keep `false`, ignored rows must carry `true`.
+        let visible = makeDisplay(pid: 1, port: 3000, name: "node", project: "front")
+        let ignored = makeDisplay(pid: 2, port: 5000, name: "claude", project: "claude", isIgnored: true)
+        XCTAssertFalse(visible.isIgnored)
+        XCTAssertTrue(ignored.isIgnored)
+    }
+
+    func testComputedGroupedEntriesMatchesIncludingFalse() {
+        // The legacy `var groupedEntries` getter must still hide ignored rows so
+        // existing callers (settings/etc.) don't accidentally start surfacing them.
+        let monitor = PortMonitor()
+        monitor.stopScanning()
+        monitor.entries = [
+            makeDisplay(pid: 1, port: 3000, name: "node", project: "front"),
+        ]
+        monitor.ignoredEntries = [
+            makeDisplay(pid: 2, port: 5000, name: "claude", project: "claude"),
+        ]
+        let computed = monitor.groupedEntries
+        let total = computed.reduce(0) { $0 + $1.entries.count }
+        XCTAssertEqual(total, 1)
     }
 }
 
@@ -1899,6 +2004,7 @@ final class LaunchSnapshotTests: XCTestCase {
 final class SnapshotStoreTests: XCTestCase {
 
     private var savedGlobalTTL: Int = 60
+    private var savedHistoryEnabled: Bool = true
 
     override func setUp() {
         super.setUp()
@@ -1907,10 +2013,15 @@ final class SnapshotStoreTests: XCTestCase {
         // behaviour explicitly. Without this, `store.save()` would strip them on insert.
         savedGlobalTTL = AppSettings.shared.snapshotTTLMinutes
         AppSettings.shared.snapshotTTLMinutes = 0
+        // Force history ON so save() actually persists in tests — individual tests for the
+        // disabled path flip this themselves and restore it via their own defer.
+        savedHistoryEnabled = AppSettings.shared.historyEnabled
+        AppSettings.shared.historyEnabled = true
     }
 
     override func tearDown() {
         AppSettings.shared.snapshotTTLMinutes = savedGlobalTTL
+        AppSettings.shared.historyEnabled = savedHistoryEnabled
         super.tearDown()
     }
 
@@ -2086,6 +2197,55 @@ final class SnapshotStoreTests: XCTestCase {
         let ordered = groups[0].snapshots.map(\.roleLabel)
         // DB → Back → Front per RelaunchRole priority.
         XCTAssertEqual(ordered, ["DB", "Back", "Front"])
+    }
+
+    // MARK: - historyEnabled toggle (issue #27)
+
+    func testSaveIsNoOpWhenHistoryDisabled() {
+        // With `historyEnabled = false`, save() must not retain the snapshot in memory
+        // nor write the JSON blob back to UserDefaults.
+        let savedFlag = AppSettings.shared.historyEnabled
+        defer { AppSettings.shared.historyEnabled = savedFlag }
+        AppSettings.shared.historyEnabled = false
+
+        let (store, defaults) = freshStore()
+        store.save(makeSnapshot())
+
+        XCTAssertTrue(store.isEmpty, "history disabled → in-memory store stays empty")
+        XCTAssertNil(defaults.data(forKey: "launchSnapshots"),
+                     "history disabled → nothing written to UserDefaults")
+    }
+
+    func testSaveStillWorksWhenHistoryEnabled() {
+        // The default state — make sure flipping the new flag doesn't regress the
+        // existing save/persist path.
+        let savedFlag = AppSettings.shared.historyEnabled
+        defer { AppSettings.shared.historyEnabled = savedFlag }
+        AppSettings.shared.historyEnabled = true
+
+        let (store, defaults) = freshStore()
+        store.save(makeSnapshot())
+
+        XCTAssertEqual(store.snapshots.count, 1)
+        XCTAssertNotNil(defaults.data(forKey: "launchSnapshots"))
+    }
+
+    func testClearAllStillWorksWhenHistoryDisabled() {
+        // The OFF transition needs to drain any pre-existing snapshots — so clearAll()
+        // must remain functional even with the master switch off.
+        let savedFlag = AppSettings.shared.historyEnabled
+        defer { AppSettings.shared.historyEnabled = savedFlag }
+
+        AppSettings.shared.historyEnabled = true
+        let (store, defaults) = freshStore()
+        store.save(makeSnapshot())
+        XCTAssertEqual(store.snapshots.count, 1)
+
+        AppSettings.shared.historyEnabled = false
+        store.clearAll()
+        XCTAssertTrue(store.isEmpty)
+        // clearAll persists the empty dict — UserDefaults blob exists but decodes to [:].
+        XCTAssertNotNil(defaults.data(forKey: "launchSnapshots"))
     }
 }
 

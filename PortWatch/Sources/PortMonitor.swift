@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -5,6 +6,11 @@ import SwiftUI
 @Observable
 final class PortMonitor {
     var entries: [PortEntryDisplay] = []
+    /// Entries whose process name matches the user's "Ignored processes" list.
+    /// Kept separate from `entries` so they never reach fleet collapsing, conflict
+    /// detection or notifications — they exist solely so the UI can opt-in to
+    /// showing them via the "Show ignored" toggle (issue #26).
+    var ignoredEntries: [PortEntryDisplay] = []
     var lastScanDate: Date? = nil
 
     var portCount: Int { entries.count }
@@ -23,15 +29,35 @@ final class PortMonitor {
     /// Number of consecutive scans a `(pid, port)` must remain in `CLOSE_WAIT` before being flagged as a zombie.
     nonisolated static let zombieConfirmationScans = 3
 
-    /// Drop entries whose process name is in the user's ignore list (case-insensitive).
-    /// Pure function — exposed for unit testing. `ignored` must be pre-lowercased.
-    nonisolated static func filterIgnoredProcesses(_ entries: [PortEntry], ignored: Set<String>) -> [PortEntry] {
-        guard !ignored.isEmpty else { return entries }
-        return entries.filter { !ignored.contains($0.processName.lowercased()) }
+    /// Split entries into (visible, ignored) buckets. `ignored` must be pre-lowercased.
+    /// Pure function — exposed for unit testing the "Show ignored" toggle wiring.
+    nonisolated static func partitionIgnoredProcesses(
+        _ entries: [PortEntry],
+        ignored: Set<String>
+    ) -> (visible: [PortEntry], ignored: [PortEntry]) {
+        guard !ignored.isEmpty else { return (entries, []) }
+        var visible: [PortEntry] = []
+        var hidden: [PortEntry] = []
+        for e in entries {
+            if ignored.contains(e.processName.lowercased()) {
+                hidden.append(e)
+            } else {
+                visible.append(e)
+            }
+        }
+        return (visible, hidden)
     }
 
     var groupedEntries: [ProjectGroup] {
-        let grouped = Dictionary(grouping: entries) { $0.entry.projectName }
+        groupedEntries(includingIgnored: false)
+    }
+
+    /// Group entries by project. Pass `includingIgnored: true` to fold the
+    /// (normally hidden) `ignoredEntries` into the result — the "Show ignored"
+    /// toggle in the UI flips this on (issue #26).
+    func groupedEntries(includingIgnored: Bool) -> [ProjectGroup] {
+        let allDisplays = includingIgnored ? entries + ignoredEntries : entries
+        let grouped = Dictionary(grouping: allDisplays) { $0.entry.projectName }
         return grouped.map { ProjectGroup(projectName: $0.key, entries: $0.value) }
             .sorted { lhs, rhs in
                 // "Other" always goes last
@@ -182,8 +208,41 @@ final class PortMonitor {
         )
     }
 
+    /// Local NSEvent monitor token for the ⇧⌘I "show ignored" hotkey. Held so
+    /// the monitor lives as long as `PortMonitor` does. PortMonitor is owned by
+    /// the App's `@State` and lives for the full app lifetime, so we don't bother
+    /// removing it on deinit (the process exit reclaims the monitor).
+    private var showIgnoredHotkeyMonitor: Any?
+
     init() {
         startScanning()
+        installShowIgnoredHotkey()
+    }
+
+    /// Install a process-local key-down monitor that toggles `AppSettings.showIgnored`
+    /// on ⌘I. We use NSEvent rather than SwiftUI's `.keyboardShortcut` because the
+    /// `MenuBarExtra .window` panel often doesn't place hidden Buttons in the key
+    /// responder chain. ⌘I normally collides with the system "Italic" shortcut, so we
+    /// skip the intercept whenever an `NSText`-derived first responder (any TextField
+    /// or TextView) has focus — Cocoa then handles italic as usual on its plain text,
+    /// which is a no-op visually but keeps text editing predictable.
+    private func installShowIgnoredHotkey() {
+        guard showIgnoredHotkeyMonitor == nil else { return }
+        showIgnoredHotkeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard mods == [.command],
+                  event.charactersIgnoringModifiers?.lowercased() == "i" else {
+                return event
+            }
+            // Don't steal ⌘I from text editing surfaces.
+            if event.window?.firstResponder is NSText {
+                return event
+            }
+            Task { @MainActor in
+                withAnimation { AppSettings.shared.showIgnored.toggle() }
+            }
+            return nil // consume — popover-level ⌘I toggles ignored visibility
+        }
     }
 
     func startScanning() {
@@ -212,10 +271,12 @@ final class PortMonitor {
             claude: settings.claudeKeywords
         )
         let ignoredLowercased = Set(settings.ignoredProcesses.map { $0.lowercased() })
-        let rawEntries = await Task.detached(priority: .utility) {
+        let partitioned = await Task.detached(priority: .utility) {
             let all = PortScanner.scanAllPorts(keywords: kw)
-            return Self.filterIgnoredProcesses(all, ignored: ignoredLowercased)
+            return Self.partitionIgnoredProcesses(all, ignored: ignoredLowercased)
         }.value
+        let rawEntries = partitioned.visible
+        let rawIgnored = partitioned.ignored
 
         let now = Date()
         var displayEntries: [PortEntryDisplay] = []
@@ -297,6 +358,16 @@ final class PortMonitor {
         }
 
         self.entries = displayEntries
+        // Ignored entries are surfaced as plain displays — no CPU sampling, no
+        // zombie streaks, no fleet collapsing. The user opted them out of the
+        // main view; they exist purely so the "Show ignored" toggle has rows
+        // to render. Keeping them light avoids bloating the CPU sample map and
+        // zombie streak dictionaries with PIDs the user explicitly silenced.
+        // The `isIgnored` flag is stamped here so `PortRowView` can branch in
+        // O(1) without the UI having to scan the bucket per row.
+        self.ignoredEntries = rawIgnored.map { entry in
+            PortEntryDisplay(entry: entry, cpuPercent: nil, isZombie: false, isIgnored: true)
+        }
         self.previousSamples = newSamples
         self.closeWaitStreaks = newStreaks
         self.lastScanDate = now
