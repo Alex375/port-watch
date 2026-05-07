@@ -332,6 +332,7 @@ struct MenuContentView: View {
     private func projectSection(_ group: ProjectGroup) -> some View {
         let isOther = group.projectName == "Other"
         let isKilling = group.entries.contains { monitor.killingPIDs.contains($0.entry.pid) }
+        let isDocker = group.entries.first?.entry.dockerContainerID != nil
 
         VStack(alignment: .leading, spacing: 6) {
             // Project header — cleaner, more breathing room
@@ -342,6 +343,14 @@ struct MenuContentView: View {
                         .foregroundStyle(.tertiary)
                         .frame(width: 12)
                         .animation(.easeInOut(duration: 0.15), value: isOtherCollapsed)
+                }
+
+                if isDocker {
+                    Image("DockerLogo")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 17, height: 17)
+                        .help("Docker container")
                 }
 
                 Text(group.projectName)
@@ -449,9 +458,19 @@ struct MenuContentView: View {
     @ViewBuilder
     private func stoppedProjectSection(_ group: StoppedProjectGroup) -> some View {
         let projectLaunching = group.snapshots.contains { monitor.launchingSnapshotIDs.contains($0.id) }
+        let isDocker = group.projectKey.hasPrefix("docker:")
 
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
+                if isDocker {
+                    Image("DockerLogo")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 17, height: 17)
+                        .opacity(0.7)
+                        .help("Docker container")
+                }
+
                 Text(group.projectName)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
