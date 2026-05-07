@@ -208,15 +208,24 @@ final class PortMonitor {
         )
     }
 
-    /// Local NSEvent monitor token for the ⇧⌘I "show ignored" hotkey. Held so
-    /// the monitor lives as long as `PortMonitor` does. PortMonitor is owned by
-    /// the App's `@State` and lives for the full app lifetime, so we don't bother
-    /// removing it on deinit (the process exit reclaims the monitor).
-    private var showIgnoredHotkeyMonitor: Any?
+    /// Local NSEvent monitor token for the ⌘I "show ignored" hotkey. The
+    /// production `PortMonitor` is owned by the App's `@State` and lives for
+    /// the full app lifetime, but tests instantiate transient monitors — we
+    /// remove the monitor on `deinit` so those instances don't leak handlers.
+    /// Marked `nonisolated(unsafe)` so the non-isolated `deinit` can read it;
+    /// the only writers are `init` and `installShowIgnoredHotkey`, both
+    /// `@MainActor`, so there's no real concurrency on this storage.
+    nonisolated(unsafe) private var showIgnoredHotkeyMonitor: Any?
 
     init() {
         startScanning()
         installShowIgnoredHotkey()
+    }
+
+    deinit {
+        if let monitor = showIgnoredHotkeyMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
     }
 
     /// Install a process-local key-down monitor that toggles `AppSettings.showIgnored`

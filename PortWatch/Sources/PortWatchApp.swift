@@ -332,6 +332,9 @@ struct MenuContentView: View {
     private func projectSection(_ group: ProjectGroup) -> some View {
         let isOther = group.projectName == "Other"
         let isKilling = group.entries.contains { monitor.killingPIDs.contains($0.entry.pid) }
+        // Inspecting only the first entry is sound because `ProjectDetector`
+        // keys Docker projects on `docker:<containerID>` — every entry in a
+        // single `ProjectGroup` therefore shares the same `dockerContainerID`.
         let isDocker = group.entries.first?.entry.dockerContainerID != nil
 
         VStack(alignment: .leading, spacing: 6) {
@@ -783,4 +786,3 @@ struct HoverButton: View {
         }
     }
 }
-

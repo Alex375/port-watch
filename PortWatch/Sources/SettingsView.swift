@@ -279,7 +279,8 @@ struct SettingsView: View {
     /// banner (`showDisableHistoryConfirm`) before any snapshots are cleared, since the
     /// disable path also wipes whatever's currently stored. We bind to a derived Boolean
     /// rather than `settings.historyEnabled` directly so we can intercept the OFF transition
-    /// and either confirm-then-clear or revert.
+    /// and either confirm-then-clear or revert. When the store is already empty there's
+    /// nothing to wipe, so we skip the banner and flip the flag immediately.
     private var historyEnabledToggle: some View {
         let binding = Binding<Bool>(
             get: { settings.historyEnabled },
@@ -288,6 +289,10 @@ struct SettingsView: View {
                     // ON path: re-enable immediately, drop any stale confirm banner.
                     showDisableHistoryConfirm = false
                     settings.historyEnabled = true
+                } else if snapshotStore.snapshots.isEmpty {
+                    // Nothing to clear → no need to confirm.
+                    showDisableHistoryConfirm = false
+                    settings.historyEnabled = false
                 } else {
                     // OFF path: stage the confirm banner. The toggle visually stays ON
                     // until the user clicks "Disable & clear" — Cancel restores it.

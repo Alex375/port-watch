@@ -338,7 +338,7 @@ struct PortRowView: View {
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
         .background(Color.secondary.opacity(0.12), in: Capsule())
-        .help("This process is in the ignored list. It would normally be hidden.")
+        .help("This process is in the ignored list. It would normally be hidden, and CPU/zombie sampling is skipped for it.")
     }
 
     // MARK: - Reusable bits
