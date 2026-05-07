@@ -141,7 +141,8 @@ struct MenuContentView: View {
             Divider()
 
             Group {
-                if monitor.entries.isEmpty && monitor.stoppedGroups.isEmpty {
+                let visibleGroups = monitor.groupedEntries(includingIgnored: monitor.settings.showIgnored)
+                if visibleGroups.isEmpty && monitor.stoppedGroups.isEmpty {
                     VStack(spacing: 12) {
                         ZStack {
                             Circle()
@@ -166,11 +167,11 @@ struct MenuContentView: View {
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
-                            ForEach(monitor.groupedEntries, id: \.projectName) { group in
+                            ForEach(visibleGroups, id: \.projectName) { group in
                                 projectSection(group)
                             }
-                            if !monitor.stoppedGroups.isEmpty {
-                                if !monitor.entries.isEmpty {
+                            if !monitor.stoppedGroups.isEmpty && monitor.settings.historyEnabled {
+                                if !visibleGroups.isEmpty {
                                     Divider().opacity(0.4)
                                 }
                                 recentlyStoppedSection
@@ -205,7 +206,7 @@ struct MenuContentView: View {
 
             Divider().opacity(0.6)
 
-            // Footer — Settings / version / Quit
+            // Footer — Settings / version / Quit.
             HStack(spacing: 0) {
                 FooterButton(icon: "gearshape", label: "Settings") {
                     showSettings.toggle()
@@ -331,6 +332,10 @@ struct MenuContentView: View {
     private func projectSection(_ group: ProjectGroup) -> some View {
         let isOther = group.projectName == "Other"
         let isKilling = group.entries.contains { monitor.killingPIDs.contains($0.entry.pid) }
+        // Inspecting only the first entry is sound because `ProjectDetector`
+        // keys Docker projects on `docker:<containerID>` — every entry in a
+        // single `ProjectGroup` therefore shares the same `dockerContainerID`.
+        let isDocker = group.entries.first?.entry.dockerContainerID != nil
 
         VStack(alignment: .leading, spacing: 6) {
             // Project header — cleaner, more breathing room
@@ -341,6 +346,14 @@ struct MenuContentView: View {
                         .foregroundStyle(.tertiary)
                         .frame(width: 12)
                         .animation(.easeInOut(duration: 0.15), value: isOtherCollapsed)
+                }
+
+                if isDocker {
+                    Image("DockerLogo")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 17, height: 17)
+                        .help("Docker container")
                 }
 
                 Text(group.projectName)
@@ -448,9 +461,19 @@ struct MenuContentView: View {
     @ViewBuilder
     private func stoppedProjectSection(_ group: StoppedProjectGroup) -> some View {
         let projectLaunching = group.snapshots.contains { monitor.launchingSnapshotIDs.contains($0.id) }
+        let isDocker = group.projectKey.hasPrefix("docker:")
 
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
+                if isDocker {
+                    Image("DockerLogo")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 17, height: 17)
+                        .opacity(0.7)
+                        .help("Docker container")
+                }
+
                 Text(group.projectName)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
@@ -512,6 +535,7 @@ struct MenuContentView: View {
             isKilling: monitor.killingPIDs.contains(display.entry.pid),
             isConflict: monitor.conflictPorts.contains(display.entry.port),
             isPendingConfirmation: isPending,
+            isIgnored: display.isIgnored,
             settings: monitor.settings,
             onKill: {
                 if display.entry.projectName == "Other" {
