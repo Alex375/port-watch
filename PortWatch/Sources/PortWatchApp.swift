@@ -556,6 +556,14 @@ struct MenuContentView: View {
             },
             onCancelKill: {
                 monitor.pendingKillConfirmation = nil
+            },
+            onIgnore: {
+                let name = display.entry.processName
+                Task { await monitor.ignoreProcess(named: name) }
+            },
+            onUnignore: {
+                let name = display.entry.processName
+                Task { await monitor.unignoreProcess(named: name) }
             }
         )
     }

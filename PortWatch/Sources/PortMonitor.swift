@@ -48,6 +48,18 @@ final class PortMonitor {
         return (visible, hidden)
     }
 
+    /// Pure helper backing the right-click "Ignore" action. Returns the ignore list with
+    /// `processName` appended — trimmed and lowercased to match `partitionIgnoredProcesses`'
+    /// case-insensitive comparison, and the settings UI's own `commitKeyword` normalisation.
+    /// Returns the list unchanged when the name is blank or already present, so repeated
+    /// right-clicks (or ignoring a fleet that shares a name) never create duplicates.
+    /// `nonisolated` + pure so the unit suite can exercise it without a live monitor.
+    nonisolated static func addingIgnoredProcess(_ processName: String, to ignored: [String]) -> [String] {
+        let name = processName.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !name.isEmpty, !ignored.contains(name) else { return ignored }
+        return ignored + [name]
+    }
+
     var groupedEntries: [ProjectGroup] {
         groupedEntries(includingIgnored: false)
     }
@@ -392,6 +404,29 @@ final class PortMonitor {
             guard !Task.isCancelled else { return }
             withAnimation { lastKillReport = nil }
         }
+    }
+
+    // MARK: - Ignore list (right-click on a port row)
+
+    /// Add a process name to the user's "Ignored processes" list straight from a port row's
+    /// context menu, then rescan so the row drops out of the main view (or, when "Show ignored"
+    /// is on, flips to its dimmed/ignored styling) without waiting for the next poll tick.
+    /// No-op when the name is blank or already ignored.
+    func ignoreProcess(named processName: String) async {
+        let updated = Self.addingIgnoredProcess(processName, to: settings.ignoredProcesses)
+        guard updated != settings.ignoredProcesses else { return }
+        settings.ignoredProcesses = updated
+        await performScan()
+    }
+
+    /// Remove a process name from the ignored list — the inverse action offered on rows
+    /// already surfaced via the "Show ignored" toggle. Matches the stored (lowercased) form
+    /// and rescans so the row immediately returns to normal monitoring.
+    func unignoreProcess(named processName: String) async {
+        let name = processName.trimmingCharacters(in: .whitespaces).lowercased()
+        guard settings.ignoredProcesses.contains(name) else { return }
+        settings.ignoredProcesses.removeAll { $0 == name }
+        await performScan()
     }
 
     // MARK: - Stop (kill + snapshot)
