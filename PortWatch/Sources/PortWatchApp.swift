@@ -545,7 +545,7 @@ struct MenuContentView: View {
                 }
             },
             onOpen: {
-                if let url = URL(string: "http://localhost:\(display.entry.port)") {
+                if let url = URL(string: display.entry.localhostURLString) {
                     NSWorkspace.shared.open(url)
                 }
             },

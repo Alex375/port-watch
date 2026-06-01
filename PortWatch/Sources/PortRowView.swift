@@ -179,14 +179,25 @@ struct PortRowView: View {
     @ViewBuilder
     private func detailSection(_ title: String, _ value: String) -> some View {
         Section(title) {
-            let lines = Self.wrappedLines(value, width: Self.detailWrapWidth)
-            ForEach(Array(lines.prefix(Self.maxDetailLines).enumerated()), id: \.offset) { _, line in
+            let capped = Self.cappedDetailLines(
+                Self.wrappedLines(value, width: Self.detailWrapWidth),
+                max: Self.maxDetailLines
+            )
+            ForEach(Array(capped.shown.enumerated()), id: \.offset) { _, line in
                 Text(line)
             }
-            if lines.count > Self.maxDetailLines {
-                Text("… +\(lines.count - Self.maxDetailLines) more lines")
+            if capped.overflow > 0 {
+                Text("… +\(capped.overflow) more lines")
             }
         }
+    }
+
+    /// Cap a list of wrapped detail lines at `max`, returning the visible prefix plus the
+    /// number of overflow lines dropped. Pure + `nonisolated` so the `maxDetailLines`
+    /// guard-rail arithmetic is unit-testable without constructing a live view.
+    nonisolated static func cappedDetailLines(_ lines: [String], max: Int) -> (shown: [String], overflow: Int) {
+        guard lines.count > max else { return (lines, 0) }
+        return (Array(lines.prefix(max)), lines.count - max)
     }
 
     /// Greedily wrap `text` into lines no longer than `width` characters for display inside an
@@ -238,14 +249,28 @@ struct PortRowView: View {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
     }
 
-    /// Open a new Terminal.app window rooted at the process's working directory.
+    /// Bundle identifiers of terminals that open a folder in a new window rooted there,
+    /// in preference order — iTerm2 first (the common developer choice), Apple Terminal as
+    /// the always-present fallback. Both reliably accept a directory URL as the open item.
+    private static let preferredTerminals = ["com.googlecode.iterm2", "com.apple.Terminal"]
+
+    /// Open a new terminal window rooted at the process's working directory, preferring
+    /// iTerm2 then Apple Terminal. If neither resolves (extremely rare — Terminal.app is a
+    /// core macOS component), reveal the directory in Finder instead so the action is never
+    /// a silent no-op (CLAUDE.md: "zero silent errors").
     private func openInTerminal() {
         let path = display.entry.cwd
-        guard !path.isEmpty,
-              let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal")
-        else { return }
+        guard !path.isEmpty else { return }
         let dir = URL(fileURLWithPath: path, isDirectory: true)
-        NSWorkspace.shared.open([dir], withApplicationAt: terminal, configuration: NSWorkspace.OpenConfiguration())
+        let workspace = NSWorkspace.shared
+        guard let terminal = Self.preferredTerminals.lazy
+            .compactMap({ workspace.urlForApplication(withBundleIdentifier: $0) })
+            .first
+        else {
+            workspace.activateFileViewerSelecting([dir])
+            return
+        }
+        workspace.open([dir], withApplicationAt: terminal, configuration: NSWorkspace.OpenConfiguration())
     }
 
     // MARK: - Top row: hero port + role + uptime + actions
@@ -333,7 +358,7 @@ struct PortRowView: View {
                     .foregroundStyle(.blue)
             }
             .buttonStyle(.borderless)
-            .help("Open http://localhost:\(display.entry.port)")
+            .help("Open \(display.entry.localhostURLString)")
 
             if isKilling {
                 ProgressView()

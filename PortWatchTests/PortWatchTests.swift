@@ -1730,6 +1730,10 @@ final class AddingIgnoredProcessTests: XCTestCase {
 @MainActor
 final class PortMonitorIgnoreActionTests: XCTestCase {
 
+    // These exercise the async wrapper's settings mutation + guard. The pure list logic is
+    // already covered by `AddingIgnoredProcessTests`; here we pass a no-op `rescan` so the
+    // assertion isn't coupled to a heavyweight, machine-dependent libproc port scan.
+
     func testIgnoreProcessAppendsToSettings() async {
         let settings = AppSettings.shared
         let saved = settings.ignoredProcesses
@@ -1739,7 +1743,7 @@ final class PortMonitorIgnoreActionTests: XCTestCase {
         let monitor = PortMonitor()
         monitor.stopScanning()
 
-        await monitor.ignoreProcess(named: "MyTestProc")
+        await monitor.ignoreProcess(named: "MyTestProc", rescan: {})
         XCTAssertTrue(settings.ignoredProcesses.contains("mytestproc"))
     }
 
@@ -1752,7 +1756,7 @@ final class PortMonitorIgnoreActionTests: XCTestCase {
         let monitor = PortMonitor()
         monitor.stopScanning()
 
-        await monitor.unignoreProcess(named: "MyTestProc")
+        await monitor.unignoreProcess(named: "MyTestProc", rescan: {})
         XCTAssertFalse(settings.ignoredProcesses.contains("mytestproc"))
         XCTAssertTrue(settings.ignoredProcesses.contains("claude"))
     }
@@ -1766,7 +1770,7 @@ final class PortMonitorIgnoreActionTests: XCTestCase {
         let monitor = PortMonitor()
         monitor.stopScanning()
 
-        await monitor.ignoreProcess(named: "claude")
+        await monitor.ignoreProcess(named: "claude", rescan: {})
         XCTAssertEqual(settings.ignoredProcesses, ["claude"])
     }
 }
@@ -1801,10 +1805,12 @@ final class WrappedLinesTests: XCTestCase {
     }
 
     func testBreaksPreferAfterSeparators() {
-        // With a slash/space available inside the window, the break should land right after it
-        // rather than mid-token, so each line stays readable.
+        // Breaks land right after the *rightmost* separator within the window — not mid-token,
+        // not the leftmost. Pin the exact output: the previous `allSatisfy { hasSuffix("/") }`
+        // check also passed for a leftmost-break or hard-split regression, so it under-pinned
+        // the property. Exact equality fails loudly on any of those.
         let lines = PortRowView.wrappedLines("/aaa/bbb/ccc/ddd", width: 8)
-        XCTAssertTrue(lines.allSatisfy { $0.hasSuffix("/") || $0 == lines.last }, "lines: \(lines)")
+        XCTAssertEqual(lines, ["/aaa/", "bbb/ccc/", "ddd"])
         XCTAssertEqual(lines.joined(), "/aaa/bbb/ccc/ddd")
     }
 
@@ -1819,6 +1825,41 @@ final class WrappedLinesTests: XCTestCase {
 
     func testZeroWidthIsSafeNoOp() {
         XCTAssertEqual(PortRowView.wrappedLines("anything", width: 0), ["anything"])
+    }
+}
+
+// MARK: - cappedDetailLines Tests (context-menu detail truncation guard rail)
+
+final class CappedDetailLinesTests: XCTestCase {
+
+    func testUnderCapReturnsAllNoOverflow() {
+        let lines = (0..<10).map { "line\($0)" }
+        let result = PortRowView.cappedDetailLines(lines, max: 60)
+        XCTAssertEqual(result.shown, lines)
+        XCTAssertEqual(result.overflow, 0)
+    }
+
+    func testExactlyCapIsNotTruncated() {
+        // Boundary: exactly `max` lines must render in full with no "+N more" summary.
+        let lines = (0..<60).map { "line\($0)" }
+        let result = PortRowView.cappedDetailLines(lines, max: 60)
+        XCTAssertEqual(result.shown.count, 60)
+        XCTAssertEqual(result.overflow, 0)
+    }
+
+    func testOneOverCapTruncatesWithRemainderOfOne() {
+        // Boundary: max + 1 keeps the first `max` and reports exactly 1 dropped line.
+        let lines = (0..<61).map { "line\($0)" }
+        let result = PortRowView.cappedDetailLines(lines, max: 60)
+        XCTAssertEqual(result.shown, Array(lines.prefix(60)))
+        XCTAssertEqual(result.overflow, 1)
+    }
+
+    func testLargeOverflowCountsRemainder() {
+        let lines = (0..<200).map { "x\($0)" }
+        let result = PortRowView.cappedDetailLines(lines, max: 60)
+        XCTAssertEqual(result.shown.count, 60)
+        XCTAssertEqual(result.overflow, 140)
     }
 }
 
