@@ -48,6 +48,18 @@ final class PortMonitor {
         return (visible, hidden)
     }
 
+    /// Pure helper backing the right-click "Ignore" action. Returns the ignore list with
+    /// `processName` appended — trimmed and lowercased to match `partitionIgnoredProcesses`'
+    /// case-insensitive comparison, and the settings UI's own `commitKeyword` normalisation.
+    /// Returns the list unchanged when the name is blank or already present, so repeated
+    /// right-clicks (or ignoring a fleet that shares a name) never create duplicates.
+    /// `nonisolated` + pure so the unit suite can exercise it without a live monitor.
+    nonisolated static func addingIgnoredProcess(_ processName: String, to ignored: [String]) -> [String] {
+        let name = processName.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !name.isEmpty, !ignored.contains(name) else { return ignored }
+        return ignored + [name]
+    }
+
     var groupedEntries: [ProjectGroup] {
         groupedEntries(includingIgnored: false)
     }
@@ -98,6 +110,14 @@ final class PortMonitor {
     private var knownPorts: Set<UInt16> = []
     private var previousConflicts: Set<UInt16> = []
     private var scanTask: Task<Void, Never>? = nil
+
+    /// Monotonic token bumped at the synchronous start of every `performScan`. A scan only
+    /// commits its results if it is still the latest when it resumes from the detached
+    /// port-scan `await`; an older, slower scan that was overtaken (e.g. a scheduled scan
+    /// in flight when the user right-clicks Ignore, or runs Stop/Refresh) bails instead of
+    /// clobbering the newer scan's fresh state. Prevents transient flicker and stale
+    /// notifications from overlapping scans. Only mutated on the `@MainActor`.
+    private var scanGeneration = 0
 
     /// Streak counter per `(pid, port)` for `CLOSE_WAIT` sockets.
     /// Reset to 0 when the socket leaves `CLOSE_WAIT` or disappears.
@@ -271,6 +291,11 @@ final class PortMonitor {
     }
 
     func performScan() async {
+        // Claim a generation synchronously, before the first suspension, so a later scan
+        // that starts while we're awaiting the detached port scan supersedes us.
+        scanGeneration &+= 1
+        let myGeneration = scanGeneration
+
         let kw = PortScanner.RoleKeywords(
             front: settings.frontKeywords,
             back: settings.backKeywords,
@@ -284,6 +309,9 @@ final class PortMonitor {
             let all = PortScanner.scanAllPorts(keywords: kw)
             return Self.partitionIgnoredProcesses(all, ignored: ignoredLowercased)
         }.value
+        // A newer scan started while we were off-actor — let it own the UI state and
+        // notifications. Committing our older snapshot here would clobber it (flicker).
+        guard scanGeneration == myGeneration else { return }
         let rawEntries = partitioned.visible
         let rawIgnored = partitioned.ignored
 
@@ -392,6 +420,34 @@ final class PortMonitor {
             guard !Task.isCancelled else { return }
             withAnimation { lastKillReport = nil }
         }
+    }
+
+    // MARK: - Ignore list (right-click on a port row)
+
+    /// Add a process name to the user's "Ignored processes" list straight from a port row's
+    /// context menu, then rescan so the row drops out of the main view (or, when "Show ignored"
+    /// is on, flips to its dimmed/ignored styling) without waiting for the next poll tick.
+    /// No-op when the name is blank or already ignored.
+    ///
+    /// `rescan` defaults to a full `performScan`; it's injectable so the unit suite can pass
+    /// a no-op and assert the settings mutation without spinning a live, machine-dependent
+    /// libproc scan.
+    func ignoreProcess(named processName: String, rescan: (() async -> Void)? = nil) async {
+        let updated = Self.addingIgnoredProcess(processName, to: settings.ignoredProcesses)
+        guard updated != settings.ignoredProcesses else { return }
+        settings.ignoredProcesses = updated
+        if let rescan { await rescan() } else { await performScan() }
+    }
+
+    /// Remove a process name from the ignored list — the inverse action offered on rows
+    /// already surfaced via the "Show ignored" toggle. Matches the stored (lowercased) form
+    /// and rescans so the row immediately returns to normal monitoring. `rescan` is
+    /// injectable for the same reason as `ignoreProcess`.
+    func unignoreProcess(named processName: String, rescan: (() async -> Void)? = nil) async {
+        let name = processName.trimmingCharacters(in: .whitespaces).lowercased()
+        guard settings.ignoredProcesses.contains(name) else { return }
+        settings.ignoredProcesses.removeAll { $0 == name }
+        if let rescan { await rescan() } else { await performScan() }
     }
 
     // MARK: - Stop (kill + snapshot)

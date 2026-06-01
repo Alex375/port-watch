@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Single port row — redesigned card layout.
@@ -27,6 +28,11 @@ struct PortRowView: View {
     let onOpen: () -> Void
     let onConfirmKill: () -> Void
     let onCancelKill: () -> Void
+    /// Right-click → "Ignore" — adds this process name to the ignored list.
+    var onIgnore: () -> Void = {}
+    /// Right-click → "Stop ignoring" — only meaningful for rows already shown via
+    /// the "Show ignored" toggle (`isIgnored == true`).
+    var onUnignore: () -> Void = {}
 
     @State private var isHovered = false
     @State private var isExpanded = false
@@ -98,6 +104,173 @@ struct PortRowView: View {
                 isExpanded.toggle()
             }
         }
+        .contextMenu { rowContextMenu }
+    }
+
+    // MARK: - Right-click context menu
+
+    /// Character budget per wrapped detail line. A macOS context menu is NSMenu-backed and
+    /// each item renders on a single, truncating line, so we pre-wrap long values into short
+    /// lines that comfortably fit the menu's width in the system font (proportional, so this
+    /// is deliberately conservative). See `wrappedLines(_:width:)`.
+    private static let detailWrapWidth = 56
+    /// Hard ceiling on wrapped lines per detail section so a pathological multi-kilobyte
+    /// command line can't produce an absurdly tall menu; the remainder is summarised.
+    private static let maxDetailLines = 60
+
+    /// Right-click menu. Actions first (open/copy/reveal/terminal), then the ignore/unignore
+    /// toggle, and finally the *untruncated* detail sections (full command, working directory,
+    /// executable) at the bottom. The detail sections deliberately spell things out in full:
+    /// the in-row layout truncates the command and cwd for density, but a context menu can
+    /// afford to be verbose, so this is where the user reads the complete values.
+    @ViewBuilder
+    private var rowContextMenu: some View {
+        Button(action: onOpen) {
+            Label("Open \(display.entry.localhostURLString)", systemImage: "globe")
+        }
+        Button(action: copyURL) {
+            Label("Copy URL", systemImage: "doc.on.doc")
+        }
+
+        // Filesystem actions only make sense when we captured a working directory.
+        if !display.entry.cwd.isEmpty {
+            Divider()
+            Button(action: revealInFinder) {
+                Label("Reveal in Finder", systemImage: "folder")
+            }
+            Button(action: openInTerminal) {
+                Label("Open in Terminal", systemImage: "terminal")
+            }
+        }
+
+        Divider()
+
+        if isIgnored {
+            Button(action: onUnignore) {
+                Label("Stop ignoring “\(display.entry.processName)”", systemImage: "eye")
+            }
+        } else {
+            Button(action: onIgnore) {
+                Label("Ignore “\(display.entry.processName)”", systemImage: "eye.slash")
+            }
+        }
+
+        Divider()
+
+        detailSection("Command", fullCommand)
+        if !display.entry.cwd.isEmpty {
+            detailSection("Working directory", display.entry.cwd)
+        }
+        if !display.entry.processPath.isEmpty {
+            detailSection("Executable", display.entry.processPath)
+        }
+    }
+
+    /// The complete invocation: the raw argv joined with spaces (so the full executable path
+    /// and every flag are present), falling back to the single-line summary when argv wasn't
+    /// captured. Wrapped by `detailSection` so it never truncates in the menu.
+    private var fullCommand: String {
+        let argv = display.entry.arguments
+        return argv.isEmpty ? display.commandSummary : argv.joined(separator: " ")
+    }
+
+    /// A "detail" section whose value is shown in full as a stack of non-interactive,
+    /// pre-wrapped label rows — the menu can't wrap a single item, so we wrap ourselves.
+    @ViewBuilder
+    private func detailSection(_ title: String, _ value: String) -> some View {
+        Section(title) {
+            let capped = Self.cappedDetailLines(
+                Self.wrappedLines(value, width: Self.detailWrapWidth),
+                max: Self.maxDetailLines
+            )
+            ForEach(Array(capped.shown.enumerated()), id: \.offset) { _, line in
+                Text(line)
+            }
+            if capped.overflow > 0 {
+                Text("… +\(capped.overflow) more lines")
+            }
+        }
+    }
+
+    /// Cap a list of wrapped detail lines at `max`, returning the visible prefix plus the
+    /// number of overflow lines dropped. Pure + `nonisolated` so the `maxDetailLines`
+    /// guard-rail arithmetic is unit-testable without constructing a live view.
+    nonisolated static func cappedDetailLines(_ lines: [String], max: Int) -> (shown: [String], overflow: Int) {
+        guard lines.count > max else { return (lines, 0) }
+        return (Array(lines.prefix(max)), lines.count - max)
+    }
+
+    /// Greedily wrap `text` into lines no longer than `width` characters for display inside an
+    /// NSMenu-backed context menu (each item renders on a single, truncating line — so we
+    /// pre-wrap rather than rely on the OS). Breaks after the last "/" or space within the
+    /// window so paths/commands stay readable, hard-splitting any run longer than `width`.
+    /// The concatenation of the returned lines always equals `text` (no characters lost or
+    /// added). `nonisolated` + pure so the unit suite can exercise it directly.
+    nonisolated static func wrappedLines(_ text: String, width: Int) -> [String] {
+        guard width > 0, text.count > width else { return [text] }
+        let chars = Array(text)
+        let n = chars.count
+        var lines: [String] = []
+        var start = 0
+        while start < n {
+            if n - start <= width {
+                lines.append(String(chars[start..<n]))
+                break
+            }
+            let windowEnd = start + width
+            var brk = windowEnd // hard break at the width budget by default
+            var i = windowEnd - 1
+            while i > start {
+                if chars[i] == "/" || chars[i] == " " {
+                    brk = i + 1 // break right after the separator to keep it readable
+                    break
+                }
+                i -= 1
+            }
+            lines.append(String(chars[start..<brk]))
+            start = brk
+        }
+        return lines
+    }
+
+    // MARK: - Context menu actions
+
+    /// Copy `http://localhost:<port>` to the system pasteboard.
+    private func copyURL() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(display.entry.localhostURLString, forType: .string)
+    }
+
+    /// Reveal the process's working directory in Finder (selected in its parent).
+    private func revealInFinder() {
+        let path = display.entry.cwd
+        guard !path.isEmpty else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+    }
+
+    /// Bundle identifiers of terminals that open a folder in a new window rooted there,
+    /// in preference order — iTerm2 first (the common developer choice), Apple Terminal as
+    /// the always-present fallback. Both reliably accept a directory URL as the open item.
+    private static let preferredTerminals = ["com.googlecode.iterm2", "com.apple.Terminal"]
+
+    /// Open a new terminal window rooted at the process's working directory, preferring
+    /// iTerm2 then Apple Terminal. If neither resolves (extremely rare — Terminal.app is a
+    /// core macOS component), reveal the directory in Finder instead so the action is never
+    /// a silent no-op (CLAUDE.md: "zero silent errors").
+    private func openInTerminal() {
+        let path = display.entry.cwd
+        guard !path.isEmpty else { return }
+        let dir = URL(fileURLWithPath: path, isDirectory: true)
+        let workspace = NSWorkspace.shared
+        guard let terminal = Self.preferredTerminals.lazy
+            .compactMap({ workspace.urlForApplication(withBundleIdentifier: $0) })
+            .first
+        else {
+            workspace.activateFileViewerSelecting([dir])
+            return
+        }
+        workspace.open([dir], withApplicationAt: terminal, configuration: NSWorkspace.OpenConfiguration())
     }
 
     // MARK: - Top row: hero port + role + uptime + actions
@@ -185,7 +358,7 @@ struct PortRowView: View {
                     .foregroundStyle(.blue)
             }
             .buttonStyle(.borderless)
-            .help("Open http://localhost:\(display.entry.port)")
+            .help("Open \(display.entry.localhostURLString)")
 
             if isKilling {
                 ProgressView()

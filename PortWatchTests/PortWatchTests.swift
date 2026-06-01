@@ -181,6 +181,13 @@ final class PortEntryTests: XCTestCase {
         XCTAssertEqual(entry.shortCwd, "/opt/homebrew/bin")
     }
 
+    // MARK: localhostURLString
+
+    func testLocalhostURLString() {
+        XCTAssertEqual(makeEntry(port: 3000).localhostURLString, "http://localhost:3000")
+        XCTAssertEqual(makeEntry(port: 8080).localhostURLString, "http://localhost:8080")
+    }
+
     func testShortCwdEmpty() {
         let entry = makeEntry(cwd: "")
         XCTAssertEqual(entry.shortCwd, "")
@@ -1688,6 +1695,171 @@ final class PortMonitorIgnoredEntriesTests: XCTestCase {
         let computed = monitor.groupedEntries
         let total = computed.reduce(0) { $0 + $1.entries.count }
         XCTAssertEqual(total, 1)
+    }
+}
+
+// MARK: - addingIgnoredProcess Tests (right-click "Ignore" wiring)
+
+final class AddingIgnoredProcessTests: XCTestCase {
+
+    func testAddsNewNameLowercased() {
+        let result = PortMonitor.addingIgnoredProcess("Node", to: ["postgres"])
+        XCTAssertEqual(result, ["postgres", "node"])
+    }
+
+    func testTrimsWhitespace() {
+        let result = PortMonitor.addingIgnoredProcess("  redis-server  ", to: [])
+        XCTAssertEqual(result, ["redis-server"])
+    }
+
+    func testBlankNameIsNoOp() {
+        let base = ["claude"]
+        XCTAssertEqual(PortMonitor.addingIgnoredProcess("", to: base), base)
+        XCTAssertEqual(PortMonitor.addingIgnoredProcess("   ", to: base), base)
+    }
+
+    func testDuplicateIsNoOpCaseInsensitive() {
+        // The list stores lowercased names; re-ignoring "CLAUDE" — or a fleet whose
+        // members share a process name — must not create a second "claude" chip.
+        let base = ["claude"]
+        XCTAssertEqual(PortMonitor.addingIgnoredProcess("claude", to: base), base)
+        XCTAssertEqual(PortMonitor.addingIgnoredProcess("CLAUDE", to: base), base)
+    }
+}
+
+@MainActor
+final class PortMonitorIgnoreActionTests: XCTestCase {
+
+    // These exercise the async wrapper's settings mutation + guard. The pure list logic is
+    // already covered by `AddingIgnoredProcessTests`; here we pass a no-op `rescan` so the
+    // assertion isn't coupled to a heavyweight, machine-dependent libproc port scan.
+
+    func testIgnoreProcessAppendsToSettings() async {
+        let settings = AppSettings.shared
+        let saved = settings.ignoredProcesses
+        defer { settings.ignoredProcesses = saved }
+
+        settings.ignoredProcesses = []
+        let monitor = PortMonitor()
+        monitor.stopScanning()
+
+        await monitor.ignoreProcess(named: "MyTestProc", rescan: {})
+        XCTAssertTrue(settings.ignoredProcesses.contains("mytestproc"))
+    }
+
+    func testUnignoreProcessRemovesFromSettings() async {
+        let settings = AppSettings.shared
+        let saved = settings.ignoredProcesses
+        defer { settings.ignoredProcesses = saved }
+
+        settings.ignoredProcesses = ["mytestproc", "claude"]
+        let monitor = PortMonitor()
+        monitor.stopScanning()
+
+        await monitor.unignoreProcess(named: "MyTestProc", rescan: {})
+        XCTAssertFalse(settings.ignoredProcesses.contains("mytestproc"))
+        XCTAssertTrue(settings.ignoredProcesses.contains("claude"))
+    }
+
+    func testIgnoreProcessIsIdempotent() async {
+        let settings = AppSettings.shared
+        let saved = settings.ignoredProcesses
+        defer { settings.ignoredProcesses = saved }
+
+        settings.ignoredProcesses = ["claude"]
+        let monitor = PortMonitor()
+        monitor.stopScanning()
+
+        await monitor.ignoreProcess(named: "claude", rescan: {})
+        XCTAssertEqual(settings.ignoredProcesses, ["claude"])
+    }
+}
+
+// MARK: - wrappedLines Tests (context-menu full-value display, no NSMenu truncation)
+
+final class WrappedLinesTests: XCTestCase {
+
+    func testShortStringStaysOnOneLine() {
+        XCTAssertEqual(PortRowView.wrappedLines("node server.js", width: 56), ["node server.js"])
+    }
+
+    func testExactlyWidthStaysOnOneLine() {
+        let s = String(repeating: "a", count: 56)
+        XCTAssertEqual(PortRowView.wrappedLines(s, width: 56), [s])
+    }
+
+    func testEachLineWithinWidth() {
+        let path = "/Users/alexandrejosien/Library/Application Support/SomeTool/data/cache/very/deep/nested/folder/structure/here"
+        let lines = PortRowView.wrappedLines(path, width: 20)
+        for line in lines {
+            XCTAssertLessThanOrEqual(line.count, 20, "line exceeds width: \(line)")
+        }
+        XCTAssertGreaterThan(lines.count, 1)
+    }
+
+    func testReconstructsOriginalExactly() {
+        // The core invariant: no characters are dropped or added by wrapping.
+        let cmd = "/opt/homebrew/Cellar/node/20.11.0/bin/node /Users/alex/repo/server.js --port 3000 --data-dir=/Users/alex/Library/App/data --verbose"
+        let lines = PortRowView.wrappedLines(cmd, width: 32)
+        XCTAssertEqual(lines.joined(), cmd)
+    }
+
+    func testBreaksPreferAfterSeparators() {
+        // Breaks land right after the *rightmost* separator within the window — not mid-token,
+        // not the leftmost. Pin the exact output: the previous `allSatisfy { hasSuffix("/") }`
+        // check also passed for a leftmost-break or hard-split regression, so it under-pinned
+        // the property. Exact equality fails loudly on any of those.
+        let lines = PortRowView.wrappedLines("/aaa/bbb/ccc/ddd", width: 8)
+        XCTAssertEqual(lines, ["/aaa/", "bbb/ccc/", "ddd"])
+        XCTAssertEqual(lines.joined(), "/aaa/bbb/ccc/ddd")
+    }
+
+    func testHardSplitsRunLongerThanWidth() {
+        // A single separator-free token longer than width must still be split (no truncation).
+        let token = String(repeating: "x", count: 130)
+        let lines = PortRowView.wrappedLines(token, width: 50)
+        XCTAssertEqual(lines.count, 3) // 50 + 50 + 30
+        XCTAssertEqual(lines.map(\.count), [50, 50, 30])
+        XCTAssertEqual(lines.joined(), token)
+    }
+
+    func testZeroWidthIsSafeNoOp() {
+        XCTAssertEqual(PortRowView.wrappedLines("anything", width: 0), ["anything"])
+    }
+}
+
+// MARK: - cappedDetailLines Tests (context-menu detail truncation guard rail)
+
+final class CappedDetailLinesTests: XCTestCase {
+
+    func testUnderCapReturnsAllNoOverflow() {
+        let lines = (0..<10).map { "line\($0)" }
+        let result = PortRowView.cappedDetailLines(lines, max: 60)
+        XCTAssertEqual(result.shown, lines)
+        XCTAssertEqual(result.overflow, 0)
+    }
+
+    func testExactlyCapIsNotTruncated() {
+        // Boundary: exactly `max` lines must render in full with no "+N more" summary.
+        let lines = (0..<60).map { "line\($0)" }
+        let result = PortRowView.cappedDetailLines(lines, max: 60)
+        XCTAssertEqual(result.shown.count, 60)
+        XCTAssertEqual(result.overflow, 0)
+    }
+
+    func testOneOverCapTruncatesWithRemainderOfOne() {
+        // Boundary: max + 1 keeps the first `max` and reports exactly 1 dropped line.
+        let lines = (0..<61).map { "line\($0)" }
+        let result = PortRowView.cappedDetailLines(lines, max: 60)
+        XCTAssertEqual(result.shown, Array(lines.prefix(60)))
+        XCTAssertEqual(result.overflow, 1)
+    }
+
+    func testLargeOverflowCountsRemainder() {
+        let lines = (0..<200).map { "x\($0)" }
+        let result = PortRowView.cappedDetailLines(lines, max: 60)
+        XCTAssertEqual(result.shown.count, 60)
+        XCTAssertEqual(result.overflow, 140)
     }
 }
 

@@ -545,7 +545,7 @@ struct MenuContentView: View {
                 }
             },
             onOpen: {
-                if let url = URL(string: "http://localhost:\(display.entry.port)") {
+                if let url = URL(string: display.entry.localhostURLString) {
                     NSWorkspace.shared.open(url)
                 }
             },
@@ -556,6 +556,14 @@ struct MenuContentView: View {
             },
             onCancelKill: {
                 monitor.pendingKillConfirmation = nil
+            },
+            onIgnore: {
+                let name = display.entry.processName
+                Task { await monitor.ignoreProcess(named: name) }
+            },
+            onUnignore: {
+                let name = display.entry.processName
+                Task { await monitor.unignoreProcess(named: name) }
             }
         )
     }
