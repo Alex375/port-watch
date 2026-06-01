@@ -181,6 +181,13 @@ final class PortEntryTests: XCTestCase {
         XCTAssertEqual(entry.shortCwd, "/opt/homebrew/bin")
     }
 
+    // MARK: localhostURLString
+
+    func testLocalhostURLString() {
+        XCTAssertEqual(makeEntry(port: 3000).localhostURLString, "http://localhost:3000")
+        XCTAssertEqual(makeEntry(port: 8080).localhostURLString, "http://localhost:8080")
+    }
+
     func testShortCwdEmpty() {
         let entry = makeEntry(cwd: "")
         XCTAssertEqual(entry.shortCwd, "")
@@ -1688,6 +1695,130 @@ final class PortMonitorIgnoredEntriesTests: XCTestCase {
         let computed = monitor.groupedEntries
         let total = computed.reduce(0) { $0 + $1.entries.count }
         XCTAssertEqual(total, 1)
+    }
+}
+
+// MARK: - addingIgnoredProcess Tests (right-click "Ignore" wiring)
+
+final class AddingIgnoredProcessTests: XCTestCase {
+
+    func testAddsNewNameLowercased() {
+        let result = PortMonitor.addingIgnoredProcess("Node", to: ["postgres"])
+        XCTAssertEqual(result, ["postgres", "node"])
+    }
+
+    func testTrimsWhitespace() {
+        let result = PortMonitor.addingIgnoredProcess("  redis-server  ", to: [])
+        XCTAssertEqual(result, ["redis-server"])
+    }
+
+    func testBlankNameIsNoOp() {
+        let base = ["claude"]
+        XCTAssertEqual(PortMonitor.addingIgnoredProcess("", to: base), base)
+        XCTAssertEqual(PortMonitor.addingIgnoredProcess("   ", to: base), base)
+    }
+
+    func testDuplicateIsNoOpCaseInsensitive() {
+        // The list stores lowercased names; re-ignoring "CLAUDE" — or a fleet whose
+        // members share a process name — must not create a second "claude" chip.
+        let base = ["claude"]
+        XCTAssertEqual(PortMonitor.addingIgnoredProcess("claude", to: base), base)
+        XCTAssertEqual(PortMonitor.addingIgnoredProcess("CLAUDE", to: base), base)
+    }
+}
+
+@MainActor
+final class PortMonitorIgnoreActionTests: XCTestCase {
+
+    func testIgnoreProcessAppendsToSettings() async {
+        let settings = AppSettings.shared
+        let saved = settings.ignoredProcesses
+        defer { settings.ignoredProcesses = saved }
+
+        settings.ignoredProcesses = []
+        let monitor = PortMonitor()
+        monitor.stopScanning()
+
+        await monitor.ignoreProcess(named: "MyTestProc")
+        XCTAssertTrue(settings.ignoredProcesses.contains("mytestproc"))
+    }
+
+    func testUnignoreProcessRemovesFromSettings() async {
+        let settings = AppSettings.shared
+        let saved = settings.ignoredProcesses
+        defer { settings.ignoredProcesses = saved }
+
+        settings.ignoredProcesses = ["mytestproc", "claude"]
+        let monitor = PortMonitor()
+        monitor.stopScanning()
+
+        await monitor.unignoreProcess(named: "MyTestProc")
+        XCTAssertFalse(settings.ignoredProcesses.contains("mytestproc"))
+        XCTAssertTrue(settings.ignoredProcesses.contains("claude"))
+    }
+
+    func testIgnoreProcessIsIdempotent() async {
+        let settings = AppSettings.shared
+        let saved = settings.ignoredProcesses
+        defer { settings.ignoredProcesses = saved }
+
+        settings.ignoredProcesses = ["claude"]
+        let monitor = PortMonitor()
+        monitor.stopScanning()
+
+        await monitor.ignoreProcess(named: "claude")
+        XCTAssertEqual(settings.ignoredProcesses, ["claude"])
+    }
+}
+
+// MARK: - wrappedLines Tests (context-menu full-value display, no NSMenu truncation)
+
+final class WrappedLinesTests: XCTestCase {
+
+    func testShortStringStaysOnOneLine() {
+        XCTAssertEqual(PortRowView.wrappedLines("node server.js", width: 56), ["node server.js"])
+    }
+
+    func testExactlyWidthStaysOnOneLine() {
+        let s = String(repeating: "a", count: 56)
+        XCTAssertEqual(PortRowView.wrappedLines(s, width: 56), [s])
+    }
+
+    func testEachLineWithinWidth() {
+        let path = "/Users/alexandrejosien/Library/Application Support/SomeTool/data/cache/very/deep/nested/folder/structure/here"
+        let lines = PortRowView.wrappedLines(path, width: 20)
+        for line in lines {
+            XCTAssertLessThanOrEqual(line.count, 20, "line exceeds width: \(line)")
+        }
+        XCTAssertGreaterThan(lines.count, 1)
+    }
+
+    func testReconstructsOriginalExactly() {
+        // The core invariant: no characters are dropped or added by wrapping.
+        let cmd = "/opt/homebrew/Cellar/node/20.11.0/bin/node /Users/alex/repo/server.js --port 3000 --data-dir=/Users/alex/Library/App/data --verbose"
+        let lines = PortRowView.wrappedLines(cmd, width: 32)
+        XCTAssertEqual(lines.joined(), cmd)
+    }
+
+    func testBreaksPreferAfterSeparators() {
+        // With a slash/space available inside the window, the break should land right after it
+        // rather than mid-token, so each line stays readable.
+        let lines = PortRowView.wrappedLines("/aaa/bbb/ccc/ddd", width: 8)
+        XCTAssertTrue(lines.allSatisfy { $0.hasSuffix("/") || $0 == lines.last }, "lines: \(lines)")
+        XCTAssertEqual(lines.joined(), "/aaa/bbb/ccc/ddd")
+    }
+
+    func testHardSplitsRunLongerThanWidth() {
+        // A single separator-free token longer than width must still be split (no truncation).
+        let token = String(repeating: "x", count: 130)
+        let lines = PortRowView.wrappedLines(token, width: 50)
+        XCTAssertEqual(lines.count, 3) // 50 + 50 + 30
+        XCTAssertEqual(lines.map(\.count), [50, 50, 30])
+        XCTAssertEqual(lines.joined(), token)
+    }
+
+    func testZeroWidthIsSafeNoOp() {
+        XCTAssertEqual(PortRowView.wrappedLines("anything", width: 0), ["anything"])
     }
 }
 

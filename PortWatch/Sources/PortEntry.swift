@@ -85,6 +85,12 @@ struct PortEntry: Identifiable, Sendable {
         Double(residentMemoryBytes) / (1024 * 1024)
     }
 
+    /// `http://localhost:<port>` — the URL the row's globe action opens and the
+    /// context menu's "Copy URL" copies. Centralised so both stay in sync.
+    var localhostURLString: String {
+        "http://localhost:\(port)"
+    }
+
     /// Cwd with ~ substitution.
     var shortCwd: String {
         guard !cwd.isEmpty else { return "" }

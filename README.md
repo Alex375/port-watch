@@ -146,6 +146,7 @@ Hide process names that open **loopback servers for IPC** but aren't user-facing
 
 Matching is **case-insensitive exact match** on the process name. Configured in **Settings → Ignored processes**.
 
+- **Ignore in one click** — **right-click any port row** and choose *Ignore “<process>”* to add its process name to the list (no need to open Settings and type it). The row drops out on the spot. Rows you're peeking at (see below) offer the inverse *Stop ignoring* action. The same right-click menu also offers **Copy URL**, **Reveal in Finder**, **Open in Terminal** (rooted at the process's working directory), and **untruncated** *Command* / *Working directory* / *Executable* detail sections — the in-row layout truncates these for density, but the menu spells them out in full.
 - **Peek temporarily** — toggle **Show ignored in popover** in the same Settings section, or hit **⌘I** while the popover has focus, to fold ignored rows back into the project list with a dimmed style and an *ignored* pill. The shortcut is process-local (NSEvent monitor) and yields to text editing surfaces, so it never steals ⌘I from a focused TextField.
 
 ### Settings
