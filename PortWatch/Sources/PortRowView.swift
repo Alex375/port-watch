@@ -20,8 +20,8 @@ struct PortRowView: View {
     let isConflict: Bool
     let isPendingConfirmation: Bool
     /// True when this row is only being shown because the user toggled
-    /// "Show ignored". Renders dimmed with an "ignored" pill and suppresses
-    /// the hover kill/open actions (issue #26).
+    /// "Show ignored". Renders dimmed with an "ignored" pill (issue #26); the
+    /// hover open/stop actions stay available so it can still be killed.
     var isIgnored: Bool = false
     let settings: AppSettings
     let onKill: () -> Void
@@ -95,7 +95,8 @@ struct PortRowView: View {
             .padding(.trailing, 10)
         }
         .background(backgroundTint, in: RoundedRectangle(cornerRadius: 8))
-        .opacity(isIgnored ? 0.55 : 1.0)
+        // Undim on hover so the revealed stop/open buttons don't look disabled.
+        .opacity(isIgnored && !isHovered ? 0.55 : 1.0)
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
         .onTapGesture {
@@ -326,10 +327,10 @@ struct PortRowView: View {
                     .frame(width: 14, height: 14)
             }
 
-            // Actions (hover) or uptime (idle). Ignored rows never reveal the
-            // kill/open cluster — killing a process you've explicitly silenced
-            // is almost always a mistake; remove it from the list first.
-            if isHovered && !isIgnored {
+            // Actions (hover) or uptime (idle). Ignored rows get the same
+            // cluster — "ignored" hides a process from the list, it doesn't
+            // protect it from being stopped.
+            if isHovered {
                 actionsCluster
                     .transition(.opacity)
             } else {

@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://github.com/Alex375/port-watch/releases/latest"><img src="https://img.shields.io/github/v/release/Alex375/port-watch?label=Latest%20Release&color=blue" alt="Latest Release"></a>
   <a href="https://github.com/Alex375/port-watch/releases/latest"><img src="https://img.shields.io/github/downloads/Alex375/port-watch/total?color=success&label=Downloads" alt="Downloads"></a>
-  <img src="https://img.shields.io/badge/platform-macOS%2026%2B-lightgrey?logo=apple" alt="macOS 26+">
+  <img src="https://img.shields.io/badge/platform-macOS%2014%2B%20%C2%B7%20Intel%20%2B%20Apple%20Silicon-lightgrey?logo=apple" alt="macOS 14+ · Intel + Apple Silicon">
   <img src="https://img.shields.io/badge/Swift-6.0-orange?logo=swift" alt="Swift 6.0">
   <a href="https://github.com/Alex375/port-watch/actions"><img src="https://img.shields.io/github/actions/workflow/status/Alex375/port-watch/ci.yml?branch=dev&label=CI" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Personal%20use-blue" alt="License"></a>
@@ -147,7 +147,7 @@ Hide process names that open **loopback servers for IPC** but aren't user-facing
 Matching is **case-insensitive exact match** on the process name. Configured in **Settings → Ignored processes**.
 
 - **Ignore in one click** — **right-click any port row** and choose *Ignore “<process>”* to add its process name to the list (no need to open Settings and type it). The row drops out on the spot. Rows you're peeking at (see below) offer the inverse *Stop ignoring* action. The same right-click menu also offers **Copy URL**, **Reveal in Finder**, **Open in Terminal** (iTerm2 if installed, otherwise Terminal.app, rooted at the process's working directory), and **untruncated** *Command* / *Working directory* / *Executable* detail sections — the in-row layout truncates these for density, but the menu spells them out in full.
-- **Peek temporarily** — toggle **Show ignored in popover** in the same Settings section, or hit **⌘I** while the popover has focus, to fold ignored rows back into the project list with a dimmed style and an *ignored* pill. The shortcut is process-local (NSEvent monitor) and yields to text editing surfaces, so it never steals ⌘I from a focused TextField.
+- **Peek temporarily** — toggle **Show ignored in popover** in the same Settings section, or hit **⌘I** while the popover has focus, to fold ignored rows back into the project list with a dimmed style and an *ignored* pill. Hovering an ignored row still reveals the open/stop actions, so you can kill it without un-ignoring it first. The shortcut is process-local (NSEvent monitor) and yields to text editing surfaces, so it never steals ⌘I from a focused TextField.
 
 ### Settings
 
@@ -181,6 +181,8 @@ Checks the GitHub Releases API at launch. One-click update: downloads the new `.
 1. Go to [**Releases**](https://github.com/Alex375/port-watch/releases/latest)
 2. Download `PortWatch.zip`
 3. Unzip and move `PortWatch.app` to `/Applications`
+
+Runs on **macOS 14 (Sonoma) or later**, on both **Intel and Apple Silicon** Macs (universal binary).
 
 ### First Launch (unsigned app)
 
@@ -238,7 +240,7 @@ xcodebuild -scheme PortWatch -only-testing:PortWatchTests/TestClassName/testMeth
 | Persistence | `UserDefaults` |
 | Notifications | `UNUserNotificationCenter` |
 | CI/CD | **GitHub Actions** (`macos-26` runner) |
-| Min. macOS | **26.0** (Tahoe) |
+| Min. macOS | **14.0** (Sonoma) — universal binary (Intel + Apple Silicon) |
 
 ---
 
