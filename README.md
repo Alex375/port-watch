@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://github.com/Alex375/port-watch/releases/latest"><img src="https://img.shields.io/github/v/release/Alex375/port-watch?label=Latest%20Release&color=blue" alt="Latest Release"></a>
   <a href="https://github.com/Alex375/port-watch/releases/latest"><img src="https://img.shields.io/github/downloads/Alex375/port-watch/total?color=success&label=Downloads" alt="Downloads"></a>
-  <img src="https://img.shields.io/badge/platform-macOS%2026%2B-lightgrey?logo=apple" alt="macOS 26+">
+  <img src="https://img.shields.io/badge/platform-macOS%2014%2B%20%C2%B7%20Intel%20%2B%20Apple%20Silicon-lightgrey?logo=apple" alt="macOS 14+ · Intel + Apple Silicon">
   <img src="https://img.shields.io/badge/Swift-6.0-orange?logo=swift" alt="Swift 6.0">
   <a href="https://github.com/Alex375/port-watch/actions"><img src="https://img.shields.io/github/actions/workflow/status/Alex375/port-watch/ci.yml?branch=dev&label=CI" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Personal%20use-blue" alt="License"></a>
@@ -182,6 +182,8 @@ Checks the GitHub Releases API at launch. One-click update: downloads the new `.
 2. Download `PortWatch.zip`
 3. Unzip and move `PortWatch.app` to `/Applications`
 
+Runs on **macOS 14 (Sonoma) or later**, on both **Intel and Apple Silicon** Macs (universal binary).
+
 ### First Launch (unsigned app)
 
 > The app is **not signed** with an Apple Developer certificate. macOS will block the first launch.
@@ -238,7 +240,7 @@ xcodebuild -scheme PortWatch -only-testing:PortWatchTests/TestClassName/testMeth
 | Persistence | `UserDefaults` |
 | Notifications | `UNUserNotificationCenter` |
 | CI/CD | **GitHub Actions** (`macos-26` runner) |
-| Min. macOS | **26.0** (Tahoe) |
+| Min. macOS | **14.0** (Sonoma) — universal binary (Intel + Apple Silicon) |
 
 ---
 

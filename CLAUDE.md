@@ -53,7 +53,7 @@ The app is unsigned (no Apple Developer certificate). First launch requires: rig
 - **`@MainActor`** — `PortMonitor`, `AppSettings`, `NotificationManager` are all `@MainActor`-isolated. Background work uses `Task.detached(priority: .utility)`.
 - **`MenuBarExtra` with `.menuBarExtraStyle(.window)`** — gives a rich SwiftUI popover (not an `NSMenu`). The label shows port count with an SF Symbol.
 - **`Sendable` everywhere** — all data models (`PortEntry`, `PortEntryDisplay`, `ProjectGroup`, `KillReport`, `TCPState`, `CPUSample`) are `Sendable`. `PortScanner` is a stateless `enum` marked `Sendable`.
-- **Swift 6 strict concurrency** — the project compiles with Swift 6.0 and macOS 26 (Tahoe) deployment target.
+- **Swift 6 strict concurrency** — the project compiles with Swift 6.0 against the macOS 26 SDK, with a macOS 14 (Sonoma) deployment target (`@Observable` floor). `Info.plist`'s `LSMinimumSystemVersion` is `$(MACOSX_DEPLOYMENT_TARGET)` so the two can't drift. Release builds are universal (x86_64 + arm64), so the same .app runs on Intel Macs.
 
 ### Port Scanning (libproc)
 
