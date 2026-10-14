@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import PortWatch
 
@@ -1772,6 +1773,51 @@ final class PortMonitorIgnoreActionTests: XCTestCase {
 
         await monitor.ignoreProcess(named: "claude", rescan: {})
         XCTAssertEqual(settings.ignoredProcesses, ["claude"])
+    }
+}
+
+// MARK: - Menubar Icon Tests
+
+final class MenuBarIconTests: XCTestCase {
+
+    private func icon(_ count: Int, zombie: Bool = false, update: Bool = false) -> String {
+        PortWatchApp.menuBarIcon(projectPortCount: count, hasZombie: zombie, updateAvailable: update)
+    }
+
+    func testFillLevelFollowsPortCountWithoutUpdate() {
+        XCTAssertEqual(icon(0), "eye.slash")
+        XCTAssertEqual(icon(1), "eye")
+        XCTAssertEqual(icon(3), "eye")
+        XCTAssertEqual(icon(4), "eye.fill")
+        XCTAssertEqual(icon(8), "eye.fill")
+        XCTAssertEqual(icon(9), "eye.trianglebadge.exclamationmark")
+    }
+
+    func testUpdateAddsBadgeAndKeepsFillLevel() {
+        // No slashed badge symbol exists, so 0 ports falls back to the outlined badge eye.
+        XCTAssertEqual(icon(0, update: true), "eye.trianglebadge.exclamationmark")
+        XCTAssertEqual(icon(1, update: true), "eye.trianglebadge.exclamationmark")
+        XCTAssertEqual(icon(3, update: true), "eye.trianglebadge.exclamationmark")
+        XCTAssertEqual(icon(4, update: true), "eye.trianglebadge.exclamationmark.fill")
+        XCTAssertEqual(icon(8, update: true), "eye.trianglebadge.exclamationmark.fill")
+        XCTAssertEqual(icon(9, update: true), "eye.trianglebadge.exclamationmark")
+    }
+
+    func testZombieShowsBadgeRegardlessOfCountOrUpdate() {
+        XCTAssertEqual(icon(0, zombie: true), "eye.trianglebadge.exclamationmark")
+        XCTAssertEqual(icon(5, zombie: true), "eye.trianglebadge.exclamationmark")
+        XCTAssertEqual(icon(5, zombie: true, update: true), "eye.trianglebadge.exclamationmark")
+    }
+
+    func testAllSymbolsExist() {
+        for count in [0, 2, 6, 12] {
+            for zombie in [false, true] {
+                for update in [false, true] {
+                    let name = icon(count, zombie: zombie, update: update)
+                    XCTAssertNotNil(NSImage(systemSymbolName: name, accessibilityDescription: nil), name)
+                }
+            }
+        }
     }
 }
 

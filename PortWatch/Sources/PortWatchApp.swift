@@ -3,27 +3,38 @@ import SwiftUI
 @main
 struct PortWatchApp: App {
     @State private var monitor = PortMonitor()
+    /// Referenced here (not only in `MenuContentView`) so the singleton — and its periodic
+    /// GitHub check — starts at launch. The popover content is built lazily on first open,
+    /// so otherwise the menubar icon couldn't flag an update until the user had opened it.
+    @State private var updater = UpdateChecker.shared
 
     var body: some Scene {
         MenuBarExtra {
             MenuContentView(monitor: monitor)
                 .frame(width: 420)
         } label: {
-            Label("\(monitor.portCount)", systemImage: menuBarIcon)
+            Label("\(monitor.portCount)", systemImage: Self.menuBarIcon(
+                projectPortCount: monitor.projectPortCount,
+                hasZombie: monitor.hasZombie,
+                updateAvailable: updater.updateAvailable
+            ))
         }
         .menuBarExtraStyle(.window)
     }
 
-    private var menuBarIcon: String {
-        if monitor.hasZombie {
-            return "eye.trianglebadge.exclamationmark"
+    /// SF Symbol for the menubar label. The eye's fill level follows the project port count;
+    /// when an update is available the same fill level is kept but the eye gets a warning badge
+    /// (there's no slashed badge variant, so 0 ports shows the outlined badge eye).
+    nonisolated static func menuBarIcon(projectPortCount count: Int, hasZombie: Bool, updateAvailable: Bool) -> String {
+        let warning = "eye.trianglebadge.exclamationmark"
+        if hasZombie {
+            return warning
         }
-        let count = monitor.projectPortCount
         switch count {
-        case 0:     return "eye.slash"
-        case 1...3: return "eye"
-        case 4...8: return "eye.fill"
-        default:    return "eye.trianglebadge.exclamationmark"
+        case 0:     return updateAvailable ? warning : "eye.slash"
+        case 1...3: return updateAvailable ? warning : "eye"
+        case 4...8: return updateAvailable ? "\(warning).fill" : "eye.fill"
+        default:    return warning
         }
     }
 }
