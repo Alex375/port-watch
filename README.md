@@ -131,6 +131,8 @@ The menubar icon reflects the state of your system at a glance:
 | 4–8 ports | Eye filled |
 | 9+ ports **or** zombie detected in a project | Eye with warning |
 
+When a new version is available, the eye gets a warning badge while keeping its fill level (outlined for 0–3 ports, filled for 4–8).
+
 ### Notifications
 
 Optional macOS notifications (off by default), each with three levels:
@@ -170,7 +172,7 @@ Inline, no separate window. Everything persists to `UserDefaults`.
 
 ### Auto-Update
 
-Checks the GitHub Releases API at launch. One-click update: downloads the new `.app`, replaces the current one via a helper script, and relaunches.
+Checks the GitHub Releases API at launch (then every 2 hours) and flags a new version both in the menubar icon and with a banner at the top of the popover. One-click update: downloads the new `.app`, replaces the current one via a helper script, and relaunches.
 
 ---
 
